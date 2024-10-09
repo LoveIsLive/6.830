@@ -9,7 +9,13 @@ import simpledb.transaction.TransactionId;
 
 import java.io.*;
 
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReadWriteLock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -23,6 +29,37 @@ import java.util.concurrent.ConcurrentHashMap;
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
+    private static class LRUDNode {
+        PageId key;
+        Page val;
+        LRUDNode prev;
+        LRUDNode next;
+        Permissions perm;
+        ReadWriteLock lock;
+        TransactionId tid;
+
+        public LRUDNode(PageId key, Page val) {
+            this.key = key;
+            this.val = val;
+        }
+
+        public LRUDNode(PageId key, Page val, TransactionId tid, Permissions perm, ReadWriteLock lock) {
+            this.key = key;
+            this.val = val;
+            this.perm = perm;
+            this.lock = lock;
+            this.tid = tid;
+        }
+
+        public LRUDNode() { }
+    }
+    // 实现LRU算法
+    private final int numPages;
+    private final LRUDNode head;
+    private final LRUDNode tail;
+    private final Map<PageId, LRUDNode> map;
+
+
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
 
@@ -39,7 +76,13 @@ public class BufferPool {
      * @param numPages maximum number of pages in this buffer pool.
      */
     public BufferPool(int numPages) {
-        // some code goes here
+        // completed!
+        this.numPages = numPages;
+        this.map = new HashMap<>();
+        head = new LRUDNode();
+        tail = new LRUDNode();
+        head.next = tail;
+        tail.prev = head;
     }
     
     public static int getPageSize() {
@@ -71,10 +114,44 @@ public class BufferPool {
      * @param pid the ID of the requested page
      * @param perm the requested permissions on the page
      */
-    public  Page getPage(TransactionId tid, PageId pid, Permissions perm)
+    public synchronized Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // some code goes here
-        return null;
+        // no completed!!!
+        LRUDNode node = map.get(pid);
+        if(node == null) {
+            node = new LRUDNode(pid, Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid),
+                    tid, perm, new ReentrantReadWriteLock());
+            map.put(pid, node);
+            node.next = head.next;
+            head.next.prev = node;
+            head.next = node;
+            node.prev = head;
+            if(map.size() > numPages) { // evict
+                map.remove(tail.prev.key);
+                tail.prev.prev.next = tail;
+                tail.prev = tail.prev.prev;
+            }
+            if(perm == Permissions.READ_ONLY) {
+                node.lock.readLock().lock();
+            } else {
+                node.lock.writeLock().lock();
+            }
+        } else {
+            if(tid != node.tid) { // 加锁
+                if(perm == Permissions.READ_ONLY) {
+                    node.lock.readLock().lock();
+                } else {
+                    node.lock.writeLock().lock();
+                }
+            }
+            node.prev.next = node.next;
+            node.next.prev = node.prev;
+            node.next = head.next;
+            head.next.prev = node;
+            head.next = node;
+            node.prev = head;
+        }
+        return node.val;
     }
 
     /**
@@ -188,14 +265,14 @@ public class BufferPool {
      * Flushes a certain page to disk
      * @param pid an ID indicating the page to flush
      */
-    private synchronized  void flushPage(PageId pid) throws IOException {
+    private synchronized void flushPage(PageId pid) throws IOException {
         // some code goes here
         // not necessary for lab1
     }
 
     /** Write all pages of the specified transaction to disk.
      */
-    public synchronized  void flushPages(TransactionId tid) throws IOException {
+    public synchronized void flushPages(TransactionId tid) throws IOException {
         // some code goes here
         // not necessary for lab1|lab2
     }
@@ -204,7 +281,7 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized  void evictPage() throws DbException {
+    private synchronized void evictPage() throws DbException {
         // some code goes here
         // not necessary for lab1
     }

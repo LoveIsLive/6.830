@@ -22,15 +22,18 @@ import java.util.concurrent.ConcurrentHashMap;
  * @Threadsafe
  */
 public class Catalog {
+    private final HashMap<String, Table> nameToTable = new HashMap<>();
+    private final HashMap<Integer, Table> idToTable = new HashMap<>();
 
     /**
      * Constructor.
      * Creates a new, empty catalog.
      */
     public Catalog() {
-        // some code goes here
+        // completed!
     }
 
+    // pkeyField默认为空字符串
     /**
      * Add a new table to the catalog.
      * This table's contents are stored in the specified DbFile.
@@ -41,7 +44,12 @@ public class Catalog {
      * @param pkeyField the name of the primary key field
      */
     public void addTable(DbFile file, String name, String pkeyField) {
-        // some code goes here
+        // completed!
+        if(name == null)
+            throw new IllegalArgumentException("table name is null");
+        Table table = new Table(file, name, pkeyField);
+        nameToTable.put(name, table);
+        idToTable.put(file.getId(), table);
     }
 
     public void addTable(DbFile file, String name) {
@@ -64,8 +72,11 @@ public class Catalog {
      * @throws NoSuchElementException if the table doesn't exist
      */
     public int getTableId(String name) throws NoSuchElementException {
-        // some code goes here
-        return 0;
+        // completed!
+        Table table = nameToTable.get(name);
+        if(table == null)
+            throw new NoSuchElementException("table not exist");
+        return table.getFile().getId();
     }
 
     /**
@@ -75,8 +86,11 @@ public class Catalog {
      * @throws NoSuchElementException if the table doesn't exist
      */
     public TupleDesc getTupleDesc(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        // completed!
+        Table table = idToTable.get(tableid);
+        if(table == null)
+            throw new NoSuchElementException("table not exist");
+        return table.getFile().getTupleDesc();
     }
 
     /**
@@ -86,28 +100,38 @@ public class Catalog {
      *     function passed to addTable
      */
     public DbFile getDatabaseFile(int tableid) throws NoSuchElementException {
-        // some code goes here
-        return null;
+        // completed!
+        Table table = idToTable.get(tableid);
+        if(table == null)
+            throw new NoSuchElementException("table not exist");
+        return table.getFile();
     }
 
     public String getPrimaryKey(int tableid) {
-        // some code goes here
-        return null;
+        // completed!
+        Table table = idToTable.get(tableid);
+        if(table == null)
+            throw new NoSuchElementException("table not exist");
+        return table.getPkeyField();
     }
 
     public Iterator<Integer> tableIdIterator() {
-        // some code goes here
-        return null;
+        // completed!
+        return idToTable.keySet().iterator();
     }
 
     public String getTableName(int id) {
-        // some code goes here
-        return null;
+        // completed!
+        Table table = idToTable.get(id);
+        if(table == null)
+            throw new NoSuchElementException("table not exist");
+        return table.getName();
     }
     
     /** Delete all tables from the catalog */
     public void clear() {
-        // some code goes here
+        nameToTable.clear();
+        idToTable.clear();
     }
     
     /**
@@ -116,12 +140,12 @@ public class Catalog {
      */
     public void loadSchema(String catalogFile) {
         String line = "";
-        String baseFolder=new File(new File(catalogFile).getAbsolutePath()).getParent();
+        String baseFolder = new File(new File(catalogFile).getAbsolutePath()).getParent();
         try {
             BufferedReader br = new BufferedReader(new FileReader(catalogFile));
             
             while ((line = br.readLine()) != null) {
-                //assume line is of the format name (field type, field type, ...)
+                // assume line is of the format name (field type [pk], field type, ...)
                 String name = line.substring(0, line.indexOf("(")).trim();
                 //System.out.println("TABLE NAME: " + name);
                 String fields = line.substring(line.indexOf("(") + 1, line.indexOf(")")).trim();
@@ -152,8 +176,8 @@ public class Catalog {
                 Type[] typeAr = types.toArray(new Type[0]);
                 String[] namesAr = names.toArray(new String[0]);
                 TupleDesc t = new TupleDesc(typeAr, namesAr);
-                HeapFile tabHf = new HeapFile(new File(baseFolder+"/"+name + ".dat"), t);
-                addTable(tabHf,name,primaryKey);
+                HeapFile tabHf = new HeapFile(new File(baseFolder + "/" + name + ".dat"), t);
+                addTable(tabHf, name, primaryKey);
                 System.out.println("Added table : " + name + " with schema " + t);
             }
         } catch (IOException e) {

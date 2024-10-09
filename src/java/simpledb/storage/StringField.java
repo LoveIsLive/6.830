@@ -46,7 +46,7 @@ public class StringField implements Field {
 
 	public boolean equals(Object field) {
 	    if (!(field instanceof StringField)) return false;
-		return ((StringField) field).value.equals(value);
+	    return ((StringField) field).value.equals(value);
 	}
 
 	/**
@@ -61,7 +61,7 @@ public class StringField implements Field {
 		String s = value;
 		int overflow = maxSize - s.length();
 		if (overflow < 0) {
-            s = s.substring(0, maxSize);
+			s = s.substring(0, maxSize);
 		}
 		dos.writeInt(s.length());
 		dos.writeBytes(s);
@@ -112,7 +112,6 @@ public class StringField implements Field {
 	 * @return the Type for this Field
 	 */
 	public Type getType() {
-
 		return Type.STRING_TYPE;
 	}
 }

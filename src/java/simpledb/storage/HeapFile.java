@@ -8,6 +8,8 @@ import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
+import java.nio.channels.SeekableByteChannel;
+import java.nio.file.Files;
 import java.util.*;
 
 /**
@@ -21,7 +23,9 @@ import java.util.*;
  * @author Sam Madden
  */
 public class HeapFile implements DbFile {
-
+    private final File file;
+    private final TupleDesc tupleDesc;
+    private final SeekableByteChannel channel;
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -30,7 +34,14 @@ public class HeapFile implements DbFile {
      *            file.
      */
     public HeapFile(File f, TupleDesc td) {
-        // some code goes here
+        // completed!
+        this.file = f;
+        this.tupleDesc = td;
+        try {
+            this.channel = Files.newByteChannel(file.toPath());
+        } catch (IOException e) {
+            throw new RuntimeException("file open error");
+        }
     }
 
     /**
@@ -39,8 +50,8 @@ public class HeapFile implements DbFile {
      * @return the File backing this HeapFile on disk.
      */
     public File getFile() {
-        // some code goes here
-        return null;
+        // completed!
+        return file;
     }
 
     /**
@@ -53,8 +64,8 @@ public class HeapFile implements DbFile {
      * @return an ID uniquely identifying this HeapFile.
      */
     public int getId() {
-        // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        // completed!
+        return file.getAbsoluteFile().hashCode();
     }
 
     /**
@@ -63,8 +74,8 @@ public class HeapFile implements DbFile {
      * @return TupleDesc of this DbFile.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        throw new UnsupportedOperationException("implement this");
+        // completed!
+        return tupleDesc;
     }
 
     // see DbFile.java for javadocs
@@ -76,9 +87,9 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public void writePage(Page page) throws IOException {
         // some code goes here
-        // not necessary for lab1
     }
 
+    // not necessary for lab1
     /**
      * Returns the number of pages in this HeapFile.
      */

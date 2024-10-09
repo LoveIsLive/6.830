@@ -31,7 +31,7 @@ public enum Type implements Serializable {
     }, STRING_TYPE() {
         @Override
         public int getLen() {
-            return STRING_LEN+4;
+            return STRING_LEN + 4;
         }
 
         @Override
@@ -40,14 +40,14 @@ public enum Type implements Serializable {
                 int strLen = dis.readInt();
                 byte[] bs = new byte[strLen];
                 dis.read(bs);
-                dis.skipBytes(STRING_LEN-strLen);
+                dis.skipBytes(STRING_LEN - strLen);
                 return new StringField(new String(bs), STRING_LEN);
             } catch (IOException e) {
                 throw new ParseException("couldn't parse", 0);
             }
         }
     };
-    
+    // 字符串固定长度存储
     public static final int STRING_LEN = 128;
 
   /**

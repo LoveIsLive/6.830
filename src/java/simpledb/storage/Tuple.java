@@ -1,5 +1,7 @@
 package simpledb.storage;
 
+import simpledb.exception.TypeMismatchException;
+
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Iterator;
@@ -12,6 +14,9 @@ import java.util.Iterator;
 public class Tuple implements Serializable {
 
     private static final long serialVersionUID = 1L;
+    private TupleDesc tupleDesc;
+    private RecordId recordId;
+    private Field[] fields;
 
     /**
      * Create a new tuple with the specified schema (type).
@@ -21,15 +26,17 @@ public class Tuple implements Serializable {
      *            instance with at least one field.
      */
     public Tuple(TupleDesc td) {
-        // some code goes here
+        // completed!
+        this.tupleDesc = td;
+        this.fields = new Field[tupleDesc.numFields()];
     }
 
     /**
      * @return The TupleDesc representing the schema of this tuple.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        // completed!
+        return tupleDesc;
     }
 
     /**
@@ -37,8 +44,8 @@ public class Tuple implements Serializable {
      *         be null.
      */
     public RecordId getRecordId() {
-        // some code goes here
-        return null;
+        // completed!
+        return recordId;
     }
 
     /**
@@ -48,7 +55,8 @@ public class Tuple implements Serializable {
      *            the new RecordId for this tuple.
      */
     public void setRecordId(RecordId rid) {
-        // some code goes here
+        // completed!
+        this.recordId = rid;
     }
 
     /**
@@ -60,7 +68,13 @@ public class Tuple implements Serializable {
      *            new value for the field.
      */
     public void setField(int i, Field f) {
-        // some code goes here
+        // completed!
+        if(i < 0 || i >= tupleDesc.numFields())
+            throw new IllegalArgumentException("i out of bound");
+        if(f.getType() != tupleDesc.getFieldType(i))
+            throw new TypeMismatchException("type mismatch; expect " +
+                    tupleDesc.getFieldType(i) + ", actual " + f.getType());
+        fields[i] = f;
     }
 
     /**
@@ -70,8 +84,10 @@ public class Tuple implements Serializable {
      *            field index to return. Must be a valid index.
      */
     public Field getField(int i) {
-        // some code goes here
-        return null;
+        // completed!
+        if(i < 0 || i >= tupleDesc.numFields())
+            throw new IllegalArgumentException("i out of bound");
+        return fields[i];
     }
 
     /**
@@ -83,8 +99,13 @@ public class Tuple implements Serializable {
      * where \t is any whitespace (except a newline)
      */
     public String toString() {
-        // some code goes here
-        throw new UnsupportedOperationException("Implement this");
+        // completed!
+        StringBuilder sb = new StringBuilder();
+        for (Field field : fields) {
+            sb.append(field.toString()).append(' ');
+        }
+        sb.deleteCharAt(sb.length() - 1);
+        return sb.toString();
     }
 
     /**
@@ -93,15 +114,17 @@ public class Tuple implements Serializable {
      * */
     public Iterator<Field> fields()
     {
-        // some code goes here
-        return null;
+        // completed!
+        return Arrays.stream(fields).iterator();
     }
 
+    // 数据呢？数据不变吗？
     /**
      * reset the TupleDesc of this tuple (only affecting the TupleDesc)
      * */
     public void resetTupleDesc(TupleDesc td)
     {
-        // some code goes here
+        // completed!
+        this.tupleDesc = td;
     }
 }
