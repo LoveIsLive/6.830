@@ -13,6 +13,8 @@ import java.util.*;
 public class Filter extends Operator {
 
     private static final long serialVersionUID = 1L;
+    private final Predicate predicate;
+    private OpIterator child;
 
     /**
      * Constructor accepts a predicate to apply and a child operator to read
@@ -24,30 +26,38 @@ public class Filter extends Operator {
      *            The child operator
      */
     public Filter(Predicate p, OpIterator child) {
-        // some code goes here
+        // completed!
+        this.predicate = p;
+        this.child = child;
     }
 
     public Predicate getPredicate() {
-        // some code goes here
-        return null;
+        // completed!
+        return predicate;
     }
 
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        // completed!
+        return child.getTupleDesc();
     }
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        // completed!
+        super.open();
+        child.open();
     }
 
     public void close() {
-        // some code goes here
+        // completed!
+        super.close();
+        child.close();
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        // completed!
+        super.rewind();
+        child.rewind();
     }
 
     /**
@@ -61,19 +71,26 @@ public class Filter extends Operator {
      */
     protected Tuple fetchNext() throws NoSuchElementException,
             TransactionAbortedException, DbException {
-        // some code goes here
+        // completed!
+        while (child.hasNext()) {
+            Tuple tuple = child.next();
+            if(predicate.filter(tuple)) return tuple;
+        }
         return null;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        // completed!
+        return new OpIterator[]{ child };
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-        // some code goes here
+        // completed!
+        if(children.length != 1)
+            throw new IllegalArgumentException("Filter Operator must be one child");
+        this.child = children[0];
     }
 
 }

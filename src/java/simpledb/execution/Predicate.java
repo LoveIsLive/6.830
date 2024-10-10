@@ -46,46 +46,50 @@ public class Predicate implements Serializable {
         }
 
     }
+
+    private final int fieldIdx;
+    private final Op op;
+    private final Field operand;
     
     /**
      * Constructor.
      * 
-     * @param field
+     * @param fieldIdx
      *            field number of passed in tuples to compare against.
      * @param op
      *            operation to use for comparison
      * @param operand
      *            field value to compare passed in tuples to
      */
-    public Predicate(int field, Op op, Field operand) {
-        // some code goes here
+    public Predicate(int fieldIdx, Op op, Field operand) {
+        // completed!
+        this.fieldIdx = fieldIdx;
+        this.op = op;
+        this.operand = operand;
     }
 
     /**
      * @return the field number
      */
-    public int getField()
-    {
-        // some code goes here
-        return -1;
+    public int getField() {
+        // completed!
+        return fieldIdx;
     }
 
     /**
      * @return the operator
      */
-    public Op getOp()
-    {
-        // some code goes here
-        return null;
+    public Op getOp() {
+        // completed!
+        return op;
     }
     
     /**
      * @return the operand
      */
-    public Field getOperand()
-    {
-        // some code goes here
-        return null;
+    public Field getOperand() {
+        // completed!
+        return operand;
     }
     
     /**
@@ -99,8 +103,8 @@ public class Predicate implements Serializable {
      * @return true if the comparison is true, false otherwise.
      */
     public boolean filter(Tuple t) {
-        // some code goes here
-        return false;
+        // completed!
+        return t.getField(fieldIdx).compare(op, operand);
     }
 
     /**
@@ -108,7 +112,9 @@ public class Predicate implements Serializable {
      * operand_string"
      */
     public String toString() {
-        // some code goes here
-        return "";
+        // completed!
+        return "fieldIdx = " + fieldIdx + ' ' +
+                "op = " + op.toString() + ' ' +
+                "operand = " + operand.toString();
     }
 }

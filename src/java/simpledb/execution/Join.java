@@ -13,6 +13,10 @@ import java.util.*;
 public class Join extends Operator {
 
     private static final long serialVersionUID = 1L;
+    private final JoinPredicate joinPredicate;
+    private OpIterator leftOpIt;
+    private OpIterator rightOpIt;
+    private Tuple curLeftTuple;
 
     /**
      * Constructor. Accepts two children to join and the predicate to join them
@@ -26,12 +30,15 @@ public class Join extends Operator {
      *            Iterator for the right(inner) relation to join
      */
     public Join(JoinPredicate p, OpIterator child1, OpIterator child2) {
-        // some code goes here
+        // completed!
+        this.joinPredicate = p;
+        this.leftOpIt = child1;
+        this.rightOpIt = child2;
     }
 
     public JoinPredicate getJoinPredicate() {
-        // some code goes here
-        return null;
+        // completed!
+        return joinPredicate;
     }
 
     /**
@@ -40,8 +47,8 @@ public class Join extends Operator {
      *       alias or table name.
      * */
     public String getJoinField1Name() {
-        // some code goes here
-        return null;
+        // completed!
+        return leftOpIt.getTupleDesc().getFieldName(joinPredicate.getField1());
     }
 
     /**
@@ -50,8 +57,8 @@ public class Join extends Operator {
      *       alias or table name.
      * */
     public String getJoinField2Name() {
-        // some code goes here
-        return null;
+        // completed!
+        return rightOpIt.getTupleDesc().getFieldName(joinPredicate.getField2());
     }
 
     /**
@@ -59,21 +66,32 @@ public class Join extends Operator {
      *      implementation logic.
      */
     public TupleDesc getTupleDesc() {
-        // some code goes here
-        return null;
+        // completed!
+        return TupleDesc.merge(leftOpIt.getTupleDesc(), rightOpIt.getTupleDesc());
     }
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        // some code goes here
+        // completed!
+        super.open();
+        leftOpIt.open();
+        rightOpIt.open();
+        if(leftOpIt.hasNext()) curLeftTuple = leftOpIt.next();
     }
 
     public void close() {
-        // some code goes here
+        // completed!
+        super.close();
+        leftOpIt.close();
+        rightOpIt.close();
+        curLeftTuple = null;
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
-        // some code goes here
+        // completed!
+        super.rewind();
+        close();
+        open();
     }
 
     /**
@@ -95,19 +113,46 @@ public class Join extends Operator {
      * @see JoinPredicate#filter
      */
     protected Tuple fetchNext() throws TransactionAbortedException, DbException {
-        // some code goes here
+        // completed!
+        while (curLeftTuple != null) {
+            while (rightOpIt.hasNext()) {
+                Tuple right = rightOpIt.next();
+                if(joinPredicate.filter(curLeftTuple, right)) {
+                    Tuple res = new Tuple(getTupleDesc());
+                    int m = curLeftTuple.getTupleDesc().numFields();
+                    int n = right.getTupleDesc().numFields();
+                    for (int i = 0; i < m; i++) {
+                        res.setField(i, curLeftTuple.getField(i));
+                    }
+                    for (int i = m; i < m + n; i++) {
+                        res.setField(i, right.getField(i - m));
+                    }
+                    return res;
+                }
+            }
+            curLeftTuple = null;
+            if(leftOpIt.hasNext()) {
+                curLeftTuple = leftOpIt.next();
+                rightOpIt.rewind();
+            } else {
+                return null;
+            }
+        }
         return null;
     }
 
     @Override
     public OpIterator[] getChildren() {
-        // some code goes here
-        return null;
+        // completed!
+        return new OpIterator[]{ leftOpIt, rightOpIt };
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
-        // some code goes here
+        // completed!
+        if(children.length != 2)
+            throw new IllegalArgumentException("Join Operator must be two child");
+        leftOpIt = children[0];
+        rightOpIt = children[1];
     }
-
 }

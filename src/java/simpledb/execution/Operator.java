@@ -27,6 +27,8 @@ public abstract class Operator implements OpIterator {
 
     public Tuple next() throws DbException, TransactionAbortedException,
             NoSuchElementException {
+        if (!this.open)
+            throw new IllegalStateException("Operator not yet open");
         if (next == null) {
             next = fetchNext();
             if (next == null)
@@ -36,6 +38,12 @@ public abstract class Operator implements OpIterator {
         Tuple result = next;
         next = null;
         return result;
+    }
+
+    @Override
+    public void rewind() throws DbException, TransactionAbortedException {
+        if (!this.open)
+            throw new IllegalStateException("Operator not yet open");
     }
 
     /**
