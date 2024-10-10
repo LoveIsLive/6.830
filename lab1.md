@@ -545,13 +545,11 @@ Operators are responsible for the actual execution of the query plan. They imple
 algebra. In SimpleDB, operators are iterator based; each operator implements the `DbIterator` interface.
 
 <p>
-
 Operators are connected together into a plan by passing lower-level operators into the constructors of higher-level
 operators, i.e., by 'chaining them together.' Special access method operators at the leaves of the plan are responsible
 for reading data from the disk (and hence do not have any operators below them).
 
 <p>
-
 At the top of the plan, the program interacting with SimpleDB simply calls `getNext` on the root operator; this operator
 then calls `getNext` on its children, and so on, until these leaf operators are called. They fetch tuples from disk and
 pass them up the tree (as return arguments to `getNext`); tuples propagate up the plan in this way until they are output
@@ -611,7 +609,7 @@ Here, the argument "3" tells conver that the input has 3 columns.
 <p>
 The following code implements a simple selection query over this file. This code is equivalent to the SQL statement `SELECT * FROM some_data_file`.
 
-```
+```java
 package simpledb;
 import java.io.*;
 
@@ -730,7 +728,6 @@ If you are the first person to report a particular bug in the code, we will give
 ### 3.4 Grading
 
 <p>75% of your grade will be based on whether or not your code passes the system test suite we will run over it. These tests will be a superset of the tests we have provided. Before handing in your code, you should make sure it produces no errors (passes all of the tests) from both  <tt>ant test</tt> and <tt>ant systemtest</tt>.
-
 **Important:** before testing, gradescope will replace your <tt>build.xml</tt> and the entire contents of the <tt>test</tt>
 directory with our version of these files. This means you cannot change the format of <tt>.dat</tt> files!  You should
 also be careful changing our APIs. You should test that your code compiles the unmodified tests.

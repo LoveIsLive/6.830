@@ -116,7 +116,7 @@ public class TupleDesc implements Serializable {
     public String getFieldName(int i) throws NoSuchElementException {
         // completed!
         if(i < 0 || i >= tdItems.length)
-            throw new NoSuchElementException("i out of bound");
+            throw new NoSuchElementException("idx out of bound");
         return tdItems[i].fieldName;
     }
 
