@@ -16,7 +16,6 @@ public class OrderBy extends Operator {
     private static final long serialVersionUID = 1L;
     private OpIterator child;
     private final TupleDesc td;
-    private final List<Tuple> childTups = new ArrayList<>();
     private final int orderByField;
     private final String orderByFieldName;
     private Iterator<Tuple> it;
@@ -61,10 +60,12 @@ public class OrderBy extends Operator {
 
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
-        child.open();
         // load all the tuples in a collection, and sort it
+        child.open();
+        List<Tuple> childTups = new ArrayList<>();
         while (child.hasNext())
             childTups.add(child.next());
+        child.close();
         childTups.sort(new TupleComparator(orderByField, asc));
         it = childTups.iterator();
         super.open();
@@ -75,8 +76,10 @@ public class OrderBy extends Operator {
         it = null;
     }
 
-    public void rewind() {
-        it = childTups.iterator();
+    public void rewind() throws DbException, TransactionAbortedException {
+        super.rewind();
+        close();
+        open();
     }
 
     /**
@@ -100,6 +103,8 @@ public class OrderBy extends Operator {
 
     @Override
     public void setChildren(OpIterator[] children) {
+        if(children.length != 1)
+            throw new IllegalArgumentException("OrderBy Operator must be one child");
         this.child = children[0];
     }
 

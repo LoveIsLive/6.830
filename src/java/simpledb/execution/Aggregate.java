@@ -96,7 +96,6 @@ public class Aggregate extends Operator {
     public void open() throws NoSuchElementException, DbException,
             TransactionAbortedException {
         // completed!
-        super.open();
         child.open();
         Aggregator aggregator;
         if(child.getTupleDesc().getFieldType(aggfieldIdx) == Type.INT_TYPE) {
@@ -112,6 +111,7 @@ public class Aggregate extends Operator {
         child.rewind();
         innerOpIt = aggregator.iterator();
         innerOpIt.open();
+        super.open();
     }
 
     /**

@@ -73,10 +73,10 @@ public class Join extends Operator {
     public void open() throws DbException, NoSuchElementException,
             TransactionAbortedException {
         // completed!
-        super.open();
         leftOpIt.open();
         rightOpIt.open();
         if(leftOpIt.hasNext()) curLeftTuple = leftOpIt.next();
+        super.open();
     }
 
     public void close() {

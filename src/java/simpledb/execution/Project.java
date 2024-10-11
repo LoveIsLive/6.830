@@ -60,6 +60,7 @@ public class Project extends Operator {
     }
 
     public void rewind() throws DbException, TransactionAbortedException {
+        super.rewind();
         child.rewind();
     }
 
@@ -83,11 +84,13 @@ public class Project extends Operator {
 
     @Override
     public OpIterator[] getChildren() {
-        return new OpIterator[]{this.child};
+        return new OpIterator[]{ this.child };
     }
 
     @Override
     public void setChildren(OpIterator[] children) {
+        if(children.length != 1)
+            throw new IllegalArgumentException("Project Operator must be one child");
         if (this.child != children[0]) {
             this.child = children[0];
         }

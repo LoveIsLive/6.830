@@ -4,6 +4,7 @@ import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
 import simpledb.common.DeadlockException;
+import simpledb.exception.RuntimeReadIOException;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
@@ -127,23 +128,9 @@ public class BufferPool {
             head.next = node;
             node.prev = head;
             if(map.size() > numPages) { // evict
-                map.remove(tail.prev.key);
-                tail.prev.prev.next = tail;
-                tail.prev = tail.prev.prev;
-            }
-            if(perm == Permissions.READ_ONLY) {
-                node.lock.readLock().lock();
-            } else {
-                node.lock.writeLock().lock();
+                evictPage();
             }
         } else {
-            if(tid != node.tid) { // 加锁
-                if(perm == Permissions.READ_ONLY) {
-                    node.lock.readLock().lock();
-                } else {
-                    node.lock.writeLock().lock();
-                }
-            }
             node.prev.next = node.next;
             node.next.prev = node.prev;
             node.next = head.next;
@@ -214,8 +201,9 @@ public class BufferPool {
      */
     public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        // completed!
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        dbFile.insertTuple(tid, t);
     }
 
     /**
@@ -233,8 +221,9 @@ public class BufferPool {
      */
     public  void deleteTuple(TransactionId tid, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
-        // some code goes here
-        // not necessary for lab1
+        // completed!
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
+        dbFile.deleteTuple(tid, t);
     }
 
     /**
@@ -243,9 +232,10 @@ public class BufferPool {
      *     break simpledb if running in NO STEAL mode.
      */
     public synchronized void flushAllPages() throws IOException {
-        // some code goes here
-        // not necessary for lab1
-
+        // completed!
+        for (PageId pageId : map.keySet()) {
+            flushPage(pageId);
+        }
     }
 
     /** Remove the specific page id from the buffer pool.
@@ -257,8 +247,11 @@ public class BufferPool {
         are removed from the cache so they can be reused safely
     */
     public synchronized void discardPage(PageId pid) {
-        // some code goes here
-        // not necessary for lab1
+        // completed!
+        LRUDNode node = map.get(pid);
+        node.prev.next = node.next;
+        node.next.prev = node.prev;
+        map.remove(pid);
     }
 
     /**
@@ -266,8 +259,13 @@ public class BufferPool {
      * @param pid an ID indicating the page to flush
      */
     private synchronized void flushPage(PageId pid) throws IOException {
-        // some code goes here
-        // not necessary for lab1
+        // completed!
+        LRUDNode lrudNode = map.get(pid);
+        if(lrudNode.val.isDirty() != null) {
+            DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+            dbFile.writePage(lrudNode.val);
+            lrudNode.val.markDirty(false, lrudNode.tid);
+        }
     }
 
     /** Write all pages of the specified transaction to disk.
@@ -282,8 +280,16 @@ public class BufferPool {
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
     private synchronized void evictPage() throws DbException {
-        // some code goes here
-        // not necessary for lab1
+        // completed!
+        try {
+            flushPage(tail.prev.key);
+        } catch (IOException e) {
+            throw new RuntimeReadIOException("lab no IOException");
+        }
+        map.remove(tail.prev.key);
+        tail.prev.prev.next = tail;
+        tail.prev = tail.prev.prev;
+
     }
 
 }

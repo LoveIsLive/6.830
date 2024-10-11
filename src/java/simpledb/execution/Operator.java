@@ -88,7 +88,6 @@ public abstract class Operator implements OpIterator {
      * child, children[0] should be used. If the operator is a join, children[0]
      * and children[1] should be used.
      * 
-     * 
      * @param children
      *            the DbIterators which are to be set as the children(child) of
      *            this operator

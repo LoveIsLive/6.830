@@ -19,6 +19,7 @@ import simpledb.storage.*;
 import simpledb.systemtest.SystemTestUtil;
 import static org.junit.Assert.*;
 import junit.framework.JUnit4TestAdapter;
+import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 public class BufferPoolWriteTest extends TestUtil.CreateHeapFile {
@@ -38,7 +39,7 @@ public class BufferPoolWriteTest extends TestUtil.CreateHeapFile {
     	// each on a new page
     	@Override
     	public List<Page> insertTuple(TransactionId tid, Tuple t)
-    			throws DbException, IOException {
+			throws DbException, IOException, TransactionAbortedException {
     		List<Page> dirtypages = new ArrayList<>();
     		for(int i = 0; i < duplicates; i++) {
     			// create a blank page
@@ -46,10 +47,12 @@ public class BufferPoolWriteTest extends TestUtil.CreateHeapFile {
                 byte[] emptyData = HeapPage.createEmptyPageData();
                 bw.write(emptyData);
                 bw.close();
-    			HeapPage p = new HeapPage(new HeapPageId(super.getId(), super.numPages() - 1),
-    					HeapPage.createEmptyPageData());
-    	        p.insertTuple(t);
-    			dirtypages.add(p);
+//    			HeapPage p = new HeapPage(new HeapPageId(super.getId(), super.numPages() - 1),
+//    					HeapPage.createEmptyPageData());
+			    // 测试用例错误
+			HeapPage page = (HeapPage) Database.getBufferPool().getPage(tid, new HeapPageId(super.getId(), super.numPages() - 1), Permissions.READ_ONLY);
+			page.insertTuple(t);
+    			dirtypages.add(page);
     		}
     		return dirtypages;
     	}
