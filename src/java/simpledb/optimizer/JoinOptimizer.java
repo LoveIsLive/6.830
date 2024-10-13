@@ -130,7 +130,11 @@ public class JoinOptimizer {
             // HINT: You may need to use the variable "j" if you implemented
             // a join algorithm that's more complicated than a basic
             // nested-loops join.
-            return -1.0;
+            /*
+            * joincost(t1 join t2) = scancost(t1) + ntups(t1) x scancost(t2) //IO cost
+                       + ntups(t1) x ntups(t2)  //CPU cost
+            *  */
+            return cost1 + card1 * cost2 + card1 * card2;
         }
     }
 
@@ -174,11 +178,20 @@ public class JoinOptimizer {
                                                    String field2PureName, int card1, int card2, boolean t1pkey,
                                                    boolean t2pkey, Map<String, TableStats> stats,
                                                    Map<String, Integer> tableAliasToId) {
-        int card = 1;
-        // some code goes here
-        return card <= 0 ? 1 : card;
+        if(joinOp == Predicate.Op.EQUALS) {
+            if(t1pkey || t2pkey) {
+                if(t1pkey && t2pkey) return Math.min(card1, card2);
+                if(t1pkey) return card2;
+                return card1;
+            } else {
+                return Math.max(card1, card2);
+            }
+        } else {
+            return Math.max(Math.max(card1, card2), (int) (card1 * card2 * 0.3));
+        }
     }
 
+    // 返回所有大小为size的子集
     /**
      * Helper method to enumerate all of the subsets of a given size of a
      * specified vector.
@@ -206,11 +219,11 @@ public class JoinOptimizer {
             }
             els = newels;
         }
-
         return els;
-
     }
 
+    // NOTE: 返回的是一个有序的join顺序，且每个节点一定是t1 join t2，且t1或t2在之前已经出现过(第一个除外)
+    // 若出现过，则表示使用prevbest代替. 打印出swing树观察。
     /**
      * Compute a logical, reasonably efficient join on the specified tables. See
      * PS4 for hints on how this should be implemented.
@@ -235,10 +248,24 @@ public class JoinOptimizer {
             Map<String, TableStats> stats,
             Map<String, Double> filterSelectivities, boolean explain)
             throws ParsingException {
-
-        // some code goes here
-        //Replace the following
-        return joins;
+        int n = joins.size();
+        PlanCache planCache = new PlanCache();
+        for (int i = 1; i <= n; i++) {
+            for (Set<LogicalJoinNode> joinSet : enumerateSubsets(joins, i)) {
+                double bestCostSoFar = Double.MAX_VALUE;
+                for (LogicalJoinNode joinToRemove : joinSet) {
+                    CostCard costCard = computeCostAndCardOfSubplan(stats, filterSelectivities,
+                            joinToRemove, joinSet, bestCostSoFar, planCache);
+                    if(costCard != null) {
+                        planCache.addPlan(joinSet, costCard.cost, costCard.card, costCard.plan);
+                        bestCostSoFar = costCard.cost;
+                    }
+                }
+            }
+        }
+        List<LogicalJoinNode> res = planCache.getOrder(new HashSet<>(joins));
+        printJoins(res, planCache, stats, filterSelectivities);
+        return res;
     }
 
     // ===================== Private Methods =================================
@@ -563,7 +590,7 @@ public class JoinOptimizer {
         }
 
         f.pack();
-
+//        while (true) {} // 显示窗口
     }
 
 }

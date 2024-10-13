@@ -2,11 +2,14 @@ package simpledb.optimizer;
 
 import simpledb.common.Database;
 import simpledb.common.Type;
+import simpledb.exception.RuntimeReadIOException;
 import simpledb.execution.Predicate;
 import simpledb.execution.SeqScan;
 import simpledb.storage.*;
 import simpledb.transaction.Transaction;
+import simpledb.transaction.TransactionId;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -67,6 +70,10 @@ public class TableStats {
      * histograms.
      */
     static final int NUM_HIST_BINS = 100;
+    private final int tableId;
+    private final int ioCostPerPage;
+    private final Histogram[] histograms;
+    private int totalTuples;
 
     /**
      * Create a new TableStats object, that keeps track of statistics on each
@@ -87,6 +94,49 @@ public class TableStats {
         // necessarily have to (for example) do everything
         // in a single scan of the table.
         // some code goes here
+        this.tableId = tableid;
+        this.ioCostPerPage = ioCostPerPage;
+        TupleDesc tupleDesc = Database.getCatalog().getDatabaseFile(tableid).getTupleDesc();
+        this.histograms = new Histogram[tupleDesc.numFields()];
+        int[] mins = new int[tupleDesc.numFields()];
+        int[] maxs = new int[tupleDesc.numFields()];
+        Arrays.fill(mins, Integer.MAX_VALUE);
+        Arrays.fill(maxs, Integer.MIN_VALUE);
+        SeqScan seqScan = new SeqScan(new TransactionId(), tableId);
+        try {
+            seqScan.open();
+            while (seqScan.hasNext()) {
+                totalTuples++;
+                Tuple tuple = seqScan.next();
+                for (int i = 0; i < tupleDesc.numFields(); i++) {
+                    if(tuple.getField(i).getType() == Type.INT_TYPE) {
+                        mins[i] = Math.min(mins[i], ((IntField)tuple.getField(i)).getValue());
+                        maxs[i] = Math.max(maxs[i], ((IntField)tuple.getField(i)).getValue());
+                    }
+                }
+            }
+            for (int i = 0; i < tupleDesc.numFields(); i++) {
+                if(tupleDesc.getFieldType(i) == Type.INT_TYPE) {
+                    histograms[i] = new IntHistogram(NUM_HIST_BINS, mins[i], maxs[i]);
+                } else {
+                    histograms[i] = new StringHistogram(NUM_HIST_BINS);
+                }
+            }
+            seqScan.rewind();
+            while (seqScan.hasNext()) {
+                Tuple tuple = seqScan.next();
+                for (int i = 0; i < tupleDesc.numFields(); i++) {
+                    if(tuple.getField(i).getType() == Type.INT_TYPE) {
+                        ((IntHistogram)histograms[i]).addValue(((IntField)tuple.getField(i)).getValue());
+                    } else {
+                        ((StringHistogram)histograms[i]).addValue(((StringField)tuple.getField(i)).getValue());
+                    }
+                }
+            }
+            seqScan.close();
+        } catch (Exception e) {
+            throw new RuntimeException("lab no read IOException");
+        }
     }
 
     /**
@@ -102,8 +152,12 @@ public class TableStats {
      * @return The estimated cost of scanning the table.
      */
     public double estimateScanCost() {
-        // some code goes here
-        return 0;
+        // completed!
+        DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
+        if(dbFile instanceof HeapFile) {
+            return ioCostPerPage * ((HeapFile) dbFile).numPages();
+        }
+        return 0.0; // other
     }
 
     /**
@@ -116,8 +170,8 @@ public class TableStats {
      *         selectivityFactor
      */
     public int estimateTableCardinality(double selectivityFactor) {
-        // some code goes here
-        return 0;
+        // completed!
+        return (int) (totalTuples * selectivityFactor);
     }
 
     /**
@@ -149,16 +203,21 @@ public class TableStats {
      *         predicate
      */
     public double estimateSelectivity(int field, Predicate.Op op, Field constant) {
-        // some code goes here
-        return 1.0;
+        // completed!
+        TupleDesc tupleDesc = Database.getCatalog().getTupleDesc(tableId);
+        if(tupleDesc.getFieldType(field) == Type.INT_TYPE) {
+            return ((IntHistogram) histograms[field]).estimateSelectivity(op, ((IntField) constant).getValue());
+        } else {
+            return ((StringHistogram) histograms[field]).estimateSelectivity(op, ((StringField) constant).getValue());
+        }
     }
 
     /**
      * return the total number of tuples in this table
      * */
     public int totalTuples() {
-        // some code goes here
-        return 0;
+        // completed!
+        return totalTuples;
     }
 
 }

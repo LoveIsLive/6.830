@@ -23,7 +23,7 @@ import simpledb.transaction.Transaction;
 import simpledb.transaction.TransactionId;
 
 public class Parser {
-    static boolean explain = false;
+    static boolean explain = true; // 输出join order
 
     public static Predicate.Op getOp(String s) throws simpledb.ParsingException {
         if (s.equals("="))

@@ -7,6 +7,7 @@ import simpledb.storage.TupleDesc;
 
 import java.util.*;
 
+// 三种常见join方法：nested loop join, hash join, sort merge join(后两种只是用与等值join)
 /**
  * The Join operator implements the relational join operation.
  */
@@ -17,6 +18,7 @@ public class Join extends Operator {
     private OpIterator leftOpIt;
     private OpIterator rightOpIt;
     private Tuple curLeftTuple;
+    private final TupleDesc comboTD;
 
     /**
      * Constructor. Accepts two children to join and the predicate to join them
@@ -34,6 +36,7 @@ public class Join extends Operator {
         this.joinPredicate = p;
         this.leftOpIt = child1;
         this.rightOpIt = child2;
+        this.comboTD = TupleDesc.merge(leftOpIt.getTupleDesc(), rightOpIt.getTupleDesc());
     }
 
     public JoinPredicate getJoinPredicate() {
@@ -67,7 +70,7 @@ public class Join extends Operator {
      */
     public TupleDesc getTupleDesc() {
         // completed!
-        return TupleDesc.merge(leftOpIt.getTupleDesc(), rightOpIt.getTupleDesc());
+        return comboTD;
     }
 
     public void open() throws DbException, NoSuchElementException,
