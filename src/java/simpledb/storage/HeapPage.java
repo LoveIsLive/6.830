@@ -27,8 +27,8 @@ public class HeapPage implements Page {
 
     byte[] oldData;
     private final Byte oldDataLock = (byte) 0;
-    private boolean isDirty;
-    private TransactionId dirtyTransactionId;
+    private volatile boolean isDirty;
+    private volatile TransactionId dirtyTransactionId;
 
     /**
      * Create a HeapPage from a set of bytes of data read from disk.

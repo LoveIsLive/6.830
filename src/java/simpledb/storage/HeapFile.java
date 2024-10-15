@@ -9,6 +9,7 @@ import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 import java.io.*;
+import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.channels.SeekableByteChannel;
@@ -30,7 +31,8 @@ import java.util.*;
 public class HeapFile implements DbFile {
     private final File file;
     private final TupleDesc tupleDesc;
-    private int numPages;
+    private volatile int numPages;
+    private final int id;
     /**
      * Constructs a heap file backed by the specified file.
      * 
@@ -43,6 +45,7 @@ public class HeapFile implements DbFile {
         this.file = f;
         this.tupleDesc = td;
         this.numPages = (int) (file.length() / BufferPool.getPageSize());
+        this.id = file.getAbsoluteFile().hashCode();
     }
 
     /**
@@ -66,7 +69,7 @@ public class HeapFile implements DbFile {
      */
     public int getId() {
         // completed!
-        return file.getAbsoluteFile().hashCode();
+        return id;
     }
 
     /**
@@ -115,9 +118,21 @@ public class HeapFile implements DbFile {
         channel.write(ByteBuffer.wrap(page.getPageData()));
         if(channel instanceof FileChannel)
             ((FileChannel) channel).force(true); // flush
-        numPages++;
 
         channel.close();
+    }
+
+    // NOTE: sync
+    private synchronized HeapPageId appendEmptyPage() throws IOException {
+        HeapPageId newPageId = new HeapPageId(id, numPages);
+        SeekableByteChannel channel = openFileAndPosition(newPageId, StandardOpenOption.WRITE);
+        channel.write(ByteBuffer.wrap(HeapPage.createEmptyPageData()));
+        if(channel instanceof FileChannel)
+            ((FileChannel) channel).force(true); // flush
+
+        numPages++;
+        channel.close();
+        return newPageId;
     }
 
     /**
@@ -131,39 +146,58 @@ public class HeapFile implements DbFile {
     // see DbFile.java for javadocs
     public List<Page> insertTuple(TransactionId tid, Tuple t)
             throws DbException, IOException, TransactionAbortedException {
-        // completed!
+        // no completed!!!
         BufferPool bufferPool = Database.getBufferPool();
         int tableId = getId();
         ArrayList<Page> res = new ArrayList<>(1);
-        for (int i = 0; i < numPages; i++) {
-            HeapPageId pageId = new HeapPageId(tableId, i);
-            HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+        int idx = 0;
+        while (true) {
+            if(idx == numPages)
+                appendEmptyPage();
+            HeapPageId pageId = new HeapPageId(tableId, idx);
+            boolean prevHasLock = bufferPool.holdsLock(tid, pageId);
+            HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_ONLY);
+            // 如果有空槽请求写，没有则释放锁。
             if(page.getNumEmptySlots() > 0) {
-                page.insertTuple(t);
-                page.markDirty(true, tid);
+                while (true) {
+                    page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE); // 再以写访问
+                    page.insertTuple(t);
+                    page.markDirty(true, tid);
+                    // 重复访问，确保这个页面没有被驱逐（即确保写入）
+                    HeapPage nowPage = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+                    if(nowPage == page) break;
+                }
                 res.add(page);
                 return res;
+            } else {
+                // 之前本线程没有锁，才可以提前释放
+                if(!prevHasLock) {
+                    try {
+                        bufferPool.unsafeReleasePage(tid, pageId);
+                    } catch (Exception e) {
+                        System.out.println("no-error: unlock other thread lock");
+                    }
+                }
             }
+            idx++;
         }
-        // 写入新页
-        HeapPageId newPageId = new HeapPageId(tableId, numPages);
-        writePage(new HeapPage(newPageId, HeapPage.createEmptyPageData())); // 经过bufferpool
-        HeapPage page = (HeapPage) bufferPool.getPage(tid, newPageId, Permissions.READ_WRITE);
-        page.insertTuple(t);
-        page.markDirty(true, tid);
-        res.add(page);
-        return res;
     }
 
     // see DbFile.java for javadocs
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // completed!
-        HeapPage page = (HeapPage) Database.getBufferPool()
-                .getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
-        page.deleteTuple(t);
-        page.markDirty(true, tid);
+        HeapPage page = null;
         ArrayList<Page> res = new ArrayList<>(1);
+        while (true) {
+            page = (HeapPage) Database.getBufferPool()
+                    .getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
+            page.deleteTuple(t);
+            page.markDirty(true, tid);
+            HeapPage nowPage = (HeapPage) Database.getBufferPool()
+                    .getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
+            if(nowPage == page) break;
+        }
         res.add(page);
         return res;
     }
