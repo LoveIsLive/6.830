@@ -14,6 +14,7 @@ import java.io.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantLock;
@@ -31,14 +32,6 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
  * @Threadsafe, all fields are final
  */
 public class BufferPool {
-    private static class TranLockItem {
-        TransactionId tid;
-        Lock lock;
-        public TranLockItem(TransactionId tid, Lock lock) {
-            this.tid = tid;
-            this.lock = lock;
-        }
-    }
     private static class LRUDNode {
         PageId key;
         Page val;
@@ -69,7 +62,7 @@ public class BufferPool {
     private final ReentrantLock mapMonitor = new ReentrantLock();
     // 对map操作加锁，也就意味着对LRU队列操作加锁
     private final TransactionPageLockManage tpLockManage = new TransactionPageLockManage();
-
+    private static final int TIMEOUT_MILLISECONDS = 3500; // 认为死锁超时的时间
 
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
@@ -131,10 +124,13 @@ public class BufferPool {
      */
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
-        // no completed!!!
+        // completed!
         mapMonitor.lock(); // map lock!
         LRUDNode node = map.get(pid);
         if(node == null) { // insert
+            if(map.size() >= numPages) { // 插入前先驱逐
+                evictPage();
+            }
             node = new LRUDNode(pid, Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid),
                     tid, perm, new ReentrantReadWriteLock());
             map.put(pid, node);
@@ -142,9 +138,6 @@ public class BufferPool {
             head.next.prev = node;
             head.next = node;
             node.prev = head;
-            if(map.size() > numPages) { // evict
-                evictPage();
-            }
         } else {
             node.prev.next = node.next;
             node.next.prev = node.prev;
@@ -153,39 +146,53 @@ public class BufferPool {
             head.next = node;
             node.prev = head;
         }
-        List<Lock> curLock = tpLockManage.holdTPLock(tid, pid);
+        List<Lock> curLock = tpLockManage.holdTPLock(tid, pid); // 需要确切持有锁。
         if(curLock != null) {
             // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁，否则再请求写锁
             if(perm == Permissions.READ_WRITE && curLock.size() < 2 &&
                     curLock.get(0) instanceof ReentrantReadWriteLock.ReadLock) {
                 Map<TransactionId, List<Lock>> tls = tpLockManage.getAllTransactionAndLock(pid);
                 if(tls.size() == 1) { // 仅当前事务拥有，升级锁
-                    tpLockManage.removeTPLock(tid, pid); // 直接抛弃之前的锁
+                    // 直接抛弃之前的锁（仅一个事务拥有锁(且是读锁)，所以不会发生线程无限期阻塞，且使用tryLock）
+                    tpLockManage.removeTPLock(tid, pid);
                     ReentrantReadWriteLock newLock = new ReentrantReadWriteLock();
                     newLock.writeLock().lock();
                     tpLockManage.addTPLock(tid, pid, newLock.writeLock());
                     node.lock = newLock;
                     mapMonitor.unlock();
                 } else {
-                    tpLockManage.addTPLock(tid, pid, node.lock.writeLock());
                     mapMonitor.unlock();
-                    node.lock.writeLock().lock();
+                    if(!accessLock(node.lock.writeLock(), TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) {
+                        throw new TransactionAbortedException(); // 死锁
+                    }
+                    tpLockManage.addTPLock(tid, pid, node.lock.writeLock());
                 }
             } else {
                 mapMonitor.unlock();
             }
         } else {
-            // 首先声明页面被当前事务持有
+            mapMonitor.unlock();
+            // 需要解决的问题是：获取锁（try获取，超时认为是死锁，抛异常）
+            // 获取锁后，页面不一定还在，不过目前这并不是问题。
+            if(!accessLock(perm == Permissions.READ_ONLY ?
+                    node.lock.readLock() : node.lock.writeLock(),
+                    TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) {
+                throw new TransactionAbortedException(); // 死锁
+            }
             tpLockManage.addTPLock(tid, pid,
                     perm == Permissions.READ_ONLY ? node.lock.readLock() : node.lock.writeLock());
-            mapMonitor.unlock();
-            if(perm == Permissions.READ_ONLY) {
-                node.lock.readLock().lock();
-            } else {
-                node.lock.writeLock().lock();
-            }
         }
         return node.val;
+    }
+
+    // 尝试以指定时间访问锁，true成功，false失败（不抛异常）
+    private boolean accessLock(Lock lock, long time, TimeUnit timeUnit) {
+        try {
+            return lock.tryLock(time, timeUnit);
+        } catch (InterruptedException e) {
+            System.out.println("accessLock fail: " + e.getMessage());
+        }
+        return false;
     }
 
     /**
@@ -200,7 +207,6 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // completed!
         // not necessary for lab1|lab2
-        tpLockManage.releaseTPLock(tid, pid);
         tpLockManage.removeTPLock(tid, pid);
     }
 
@@ -211,8 +217,9 @@ public class BufferPool {
      * @param tid the ID of the transaction requesting the unlock
      */
     public void transactionComplete(TransactionId tid) {
-        // some code goes here
+        // completed!
         // not necessary for lab1|lab2
+        transactionComplete(tid, true);
     }
 
     /** Return true if the specified transaction has a lock on the specified page */
@@ -232,6 +239,20 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
+        System.out.println("commit: " + tid.getId() + " " + commit);
+        if(commit) {
+            try {
+                // 刷新脏页
+                flushPages(tid);
+                // 释放事务的锁
+                tpLockManage.removeAllTPLock(tid);
+            } catch (IOException e) {
+                throw new RuntimeException("unknown error: " + e.getMessage());
+            }
+        } else {
+            discardPages(tid);
+            tpLockManage.removeAllTPLock(tid);
+        }
     }
 
     /**
@@ -313,6 +334,22 @@ public class BufferPool {
             mapMonitor.unlock();
         }
     }
+    // 废弃指定事务所弄脏的每一个页面
+    public synchronized void discardPages(TransactionId tid) {
+        mapMonitor.lock();
+        try {
+            LRUDNode p = head.next;
+            while (p != tail) {
+                Page page = p.val;
+                if(page.isDirty() == tid) {
+                    discardPage(page.getId());
+                }
+                p = p.next;
+            }
+        } finally {
+            mapMonitor.unlock();
+        }
+    }
 
     /**
      * Flushes a certain page to disk
@@ -338,8 +375,21 @@ public class BufferPool {
     /** Write all pages of the specified transaction to disk.
      */
     public synchronized void flushPages(TransactionId tid) throws IOException {
-        // no-completed!
+        // completed!
         // not necessary for lab1|lab2
+        mapMonitor.lock();
+        try {
+            LRUDNode p = head.next;
+            while (p != tail) {
+                Page page = p.val;
+                if(page.isDirty() == tid) {
+                    flushPage(page.getId());
+                }
+                p = p.next;
+            }
+        } finally {
+            mapMonitor.unlock();
+        }
     }
 
     /**
@@ -357,12 +407,12 @@ public class BufferPool {
                     map.remove(p.key);
                     p.prev.next = p.next;
                     p.next.prev = p.prev;
-                    tpLockManage.discardAllPageLock(page.getId());
+                    tpLockManage.discardPageAllTPLock(page.getId());
                     return;
                 }
                 p = p.prev;
             }
-            throw new DbException("no clear page");
+            throw new DbException("no clean page");
         } finally {
             mapMonitor.unlock();
         }

@@ -172,10 +172,10 @@ public class HeapFile implements DbFile {
             } else {
                 // 之前本线程没有锁，才可以提前释放
                 if(!prevHasLock) {
-                    try {
-                        bufferPool.unsafeReleasePage(tid, pageId);
-                    } catch (Exception e) {
-                        System.out.println("no-error: unlock other thread lock");
+                    try { // 可能被其他线程持有锁，这种情况下，不能移除锁。（这里并无废弃Page，不影响）
+                        bufferPool.getTpLockManage().weakRemoveTPLock(tid, pageId);
+                    } catch (IllegalMonitorStateException e) {
+                        System.out.println("no-error: unlock other thread lock: " + e.getMessage());
                     }
                 }
             }

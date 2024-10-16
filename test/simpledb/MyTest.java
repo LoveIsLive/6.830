@@ -10,8 +10,11 @@ import java.nio.file.StandardOpenOption;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 public class MyTest {
-    public static void main(String[] args) throws Exception {
-        ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-        lock.readLock().unlock();
+    public static void main(String[] args) {
+        f();
+    }
+
+    public static void f() throws RuntimeException {
+
     }
 }

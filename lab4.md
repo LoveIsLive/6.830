@@ -63,7 +63,7 @@ it ensures that the ACID properties are satisfied:
 * **Consistency**:  The database is transaction consistent by virtue of
   atomicity.  Other consistency issues (e.g., key constraints) are
   not addressed in SimpleDB.</li>
-* **Isolation**: Strict two-phase locking provides isolation.</li>
+* **Isolation**: Strict two-phase locking provides isolation.</li> 即只保证read committed.
 * **Durability**: A FORCE buffer management policy ensures
   durability (see Section 2.3 below).</li>
 
