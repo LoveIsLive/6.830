@@ -23,7 +23,7 @@ public class HeapPage implements Page {
     final byte[] header;
     final Tuple[] tuples;
     final int numSlots;
-    private int curSlotUsedNum;
+    private volatile int curSlotUsedNum;
 
     byte[] oldData;
     private final Byte oldDataLock = (byte) 0;

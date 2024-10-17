@@ -159,27 +159,33 @@ public class HeapFile implements DbFile {
             HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_ONLY);
             // 如果有空槽请求写，没有则释放锁。
             if(page.getNumEmptySlots() > 0) {
-                while (true) {
-                    page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE); // 再以写访问
-                    page.insertTuple(t);
-                    page.markDirty(true, tid);
-                    // 重复访问，确保这个页面没有被驱逐（即确保写入）
-                    HeapPage nowPage = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
-                    if(nowPage == page) break;
+                page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE); // 再以写访问
+                page.insertTuple(t);
+                page.markDirty(true, tid);
+                // 页面是否还在缓冲区，确保这个页面没有被驱逐（即确保写入）
+                if(bufferPool.holdsPage(page)) {
+                    res.add(page);
+                    return res;
+                } else if (!prevHasLock) {
+                    System.out.println("insertTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
+                    releaseLock(bufferPool, tid, pageId);
                 }
-                res.add(page);
-                return res;
+                // 失败，继续访问当前页
             } else {
                 // 之前本线程没有锁，才可以提前释放
                 if(!prevHasLock) {
-                    try { // 可能被其他线程持有锁，这种情况下，不能移除锁。（这里并无废弃Page，不影响）
-                        bufferPool.getTpLockManage().weakRemoveTPLock(tid, pageId);
-                    } catch (IllegalMonitorStateException e) {
-                        System.out.println("no-error: unlock other thread lock: " + e.getMessage());
-                    }
+                    releaseLock(bufferPool, tid, pageId);
                 }
+                idx++; // 访问下一页
             }
-            idx++;
+        }
+    }
+
+    private void releaseLock(BufferPool bufferPool, TransactionId tid, PageId pageId) {
+        try { // 可能被其他线程持有锁，这种情况下，不能移除锁。
+            bufferPool.getTpLockManage().weakRemoveTPLock(tid, pageId);
+        } catch (IllegalMonitorStateException e) {
+            System.out.println("no-error: unlock other thread lock: " + e.getMessage());
         }
     }
 
@@ -189,17 +195,22 @@ public class HeapFile implements DbFile {
         // completed!
         HeapPage page = null;
         ArrayList<Page> res = new ArrayList<>(1);
+        BufferPool bufferPool = Database.getBufferPool();
+        PageId pageId = t.getRecordId().getPageId();
         while (true) {
-            page = (HeapPage) Database.getBufferPool()
-                    .getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
+            boolean prevHasLock = bufferPool.holdsLock(tid, pageId);
+            page = (HeapPage)
+                    bufferPool.getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
             page.deleteTuple(t);
             page.markDirty(true, tid);
-            HeapPage nowPage = (HeapPage) Database.getBufferPool()
-                    .getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
-            if(nowPage == page) break;
+            if(bufferPool.holdsPage(page)) {
+                res.add(page);
+                return res;
+            } else if (!prevHasLock) {
+                System.out.println("deleteTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
+                releaseLock(bufferPool, tid, pageId);
+            }
         }
-        res.add(page);
-        return res;
     }
 
     // see DbFile.java for javadocs

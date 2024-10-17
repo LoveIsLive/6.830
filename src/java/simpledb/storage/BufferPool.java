@@ -62,7 +62,7 @@ public class BufferPool {
     private final ReentrantLock mapMonitor = new ReentrantLock();
     // 对map操作加锁，也就意味着对LRU队列操作加锁
     private final TransactionPageLockManage tpLockManage = new TransactionPageLockManage();
-    private static final int TIMEOUT_MILLISECONDS = 3500; // 认为死锁超时的时间
+    private static final int TIMEOUT_MILLISECONDS = 2000; // 认为死锁超时的时间
 
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
@@ -227,6 +227,15 @@ public class BufferPool {
         // completed!
         // not necessary for lab1|lab2
         return tpLockManage.holdTPLock(tid, p) != null;
+    }
+
+    // 判断此页面是否还在bufferpool，（引用判断，判断是否是同一个对象）
+    public boolean holdsPage(Page page) {
+        mapMonitor.lock();
+        LRUDNode node = map.get(page.getId());
+        boolean res = node != null && node.val == page;
+        mapMonitor.unlock();
+        return res;
     }
 
     /**

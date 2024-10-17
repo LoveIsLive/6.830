@@ -98,9 +98,16 @@ public class TransactionPageLockManage {
         Map<PageId, List<Lock>> nodeMap = tpMap.get(tid);
         if(nodeMap != null) {
             List<Lock> locks = nodeMap.get(pageId);
+            IllegalMonitorStateException fail = null;
             for (Lock lock : locks) {
-                lock.unlock(); // may fail
+                try {
+                    lock.unlock(); // may fail
+                } catch (IllegalMonitorStateException e) {
+                    fail = e;
+                }
             }
+            if(fail != null)
+                throw new IllegalArgumentException(fail); // 直接抛出，而不移除事务在页面的锁
             nodeMap.remove(pageId);
         }
         Map<TransactionId, List<Lock>> map = ptMap.get(pageId);
