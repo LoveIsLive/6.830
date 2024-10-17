@@ -166,10 +166,8 @@ public class HeapFile implements DbFile {
                 if(bufferPool.holdsPage(page)) {
                     res.add(page);
                     return res;
-                } else if (!prevHasLock) {
-                    System.out.println("insertTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
-                    releaseLock(bufferPool, tid, pageId);
                 }
+                System.out.println("insertTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
                 // 失败，继续访问当前页
             } else {
                 // 之前本线程没有锁，才可以提前释放
@@ -198,18 +196,16 @@ public class HeapFile implements DbFile {
         BufferPool bufferPool = Database.getBufferPool();
         PageId pageId = t.getRecordId().getPageId();
         while (true) {
-            boolean prevHasLock = bufferPool.holdsLock(tid, pageId);
             page = (HeapPage)
-                    bufferPool.getPage(tid, t.getRecordId().getPageId(), Permissions.READ_WRITE);
+                    bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
             page.deleteTuple(t);
             page.markDirty(true, tid);
             if(bufferPool.holdsPage(page)) {
                 res.add(page);
                 return res;
-            } else if (!prevHasLock) {
-                System.out.println("deleteTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
-                releaseLock(bufferPool, tid, pageId);
             }
+            // 失败，继续访问当前页
+            System.out.println("deleteTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
         }
     }
 

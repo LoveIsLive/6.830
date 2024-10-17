@@ -146,12 +146,11 @@ public class BufferPool {
             head.next = node;
             node.prev = head;
         }
-        List<Lock> curLock = tpLockManage.holdTPLock(tid, pid); // 需要确切持有锁。
+        Lock[] curLock = tpLockManage.holdTPLock(tid, pid); // 需要确切持有锁。
         if(curLock != null) {
             // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁，否则再请求写锁
-            if(perm == Permissions.READ_WRITE && curLock.size() < 2 &&
-                    curLock.get(0) instanceof ReentrantReadWriteLock.ReadLock) {
-                Map<TransactionId, List<Lock>> tls = tpLockManage.getAllTransactionAndLock(pid);
+            if(perm == Permissions.READ_WRITE && curLock[0] != null && curLock[1] == null) {
+                Map<TransactionId, Lock[]> tls = tpLockManage.getAllTransactionAndLock(pid);
                 if(tls.size() == 1) { // 仅当前事务拥有，升级锁
                     // 直接抛弃之前的锁（仅一个事务拥有锁(且是读锁)，所以不会发生线程无限期阻塞，且使用tryLock）
                     tpLockManage.removeTPLock(tid, pid);
