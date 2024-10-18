@@ -161,29 +161,17 @@ public class HeapFile implements DbFile {
             if(page.getNumEmptySlots() > 0) {
                 page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE); // 再以写访问
                 page.insertTuple(t);
+                // 虽然标记为脏，但页面不一定在缓冲区中，需要Bufferpool来处理
                 page.markDirty(true, tid);
-                // 页面是否还在缓冲区，确保这个页面没有被驱逐（即确保写入）
-                if(bufferPool.holdsPage(page)) {
-                    res.add(page);
-                    return res;
-                }
-                System.out.println("insertTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
-                // 失败，继续访问当前页
+                res.add(page);
+                return res;
             } else {
-                // 之前本线程没有锁，才可以提前释放
+                // 之前没有锁，才可以提前释放。一个事务在一个线程内处理。
                 if(!prevHasLock) {
-                    releaseLock(bufferPool, tid, pageId);
+                    bufferPool.unsafeReleasePage(tid, pageId);
                 }
                 idx++; // 访问下一页
             }
-        }
-    }
-
-    private void releaseLock(BufferPool bufferPool, TransactionId tid, PageId pageId) {
-        try { // 可能被其他线程持有锁，这种情况下，不能移除锁。（即仅仅释放本线程持有的锁）
-            bufferPool.getTpLockManage().weakRemoveTPLock(tid, pageId);
-        } catch (IllegalMonitorStateException e) {
-            System.out.println("no-error: unlock other thread lock: " + e.getMessage());
         }
     }
 
@@ -191,22 +179,15 @@ public class HeapFile implements DbFile {
     public ArrayList<Page> deleteTuple(TransactionId tid, Tuple t) throws DbException,
             TransactionAbortedException {
         // completed!
-        HeapPage page = null;
         ArrayList<Page> res = new ArrayList<>(1);
         BufferPool bufferPool = Database.getBufferPool();
         PageId pageId = t.getRecordId().getPageId();
-        while (true) {
-            page = (HeapPage)
-                    bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
-            page.deleteTuple(t);
-            page.markDirty(true, tid);
-            if(bufferPool.holdsPage(page)) {
-                res.add(page);
-                return res;
-            }
-            // 失败，继续访问当前页
-            System.out.println("deleteTuple: 刚请求的页面被驱逐，写入没有正确写入，重试");
-        }
+        HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
+        page.deleteTuple(t);
+        // 虽然标记为脏，但页面不一定在缓冲区中，需要Bufferpool来处理
+        page.markDirty(true, tid);
+        res.add(page);
+        return res;
     }
 
     // see DbFile.java for javadocs
