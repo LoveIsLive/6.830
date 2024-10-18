@@ -116,6 +116,7 @@ public class BTreeInternalPage extends BTreePage {
 		setBeforeImage();
 	}
 
+	// key的数量，slot和header的数量需要加1（子孩子的数量）
 	/** 
 	 * Retrieve the maximum number of entries this page can hold. (The number of keys)
  	 */

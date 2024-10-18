@@ -15,6 +15,6 @@ public class MyTest {
     }
 
     public static void f() throws RuntimeException {
-
+        System.out.println(null instanceof Object);
     }
 }

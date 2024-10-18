@@ -180,7 +180,7 @@ public class HeapFile implements DbFile {
     }
 
     private void releaseLock(BufferPool bufferPool, TransactionId tid, PageId pageId) {
-        try { // 可能被其他线程持有锁，这种情况下，不能移除锁。
+        try { // 可能被其他线程持有锁，这种情况下，不能移除锁。（即仅仅释放本线程持有的锁）
             bufferPool.getTpLockManage().weakRemoveTPLock(tid, pageId);
         } catch (IllegalMonitorStateException e) {
             System.out.println("no-error: unlock other thread lock: " + e.getMessage());

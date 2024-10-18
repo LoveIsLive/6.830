@@ -125,63 +125,77 @@ public class BufferPool {
     public Page getPage(TransactionId tid, PageId pid, Permissions perm)
         throws TransactionAbortedException, DbException {
         // completed!
-        mapMonitor.lock(); // map lock!
-        LRUDNode node = map.get(pid);
-        if(node == null) { // insert
-            if(map.size() >= numPages) { // 插入前先驱逐
-                evictPage();
+        long startTime = System.currentTimeMillis();
+        boolean success = true;
+        while (true) {
+            success = true;
+            mapMonitor.lock(); // map lock!
+            LRUDNode node = map.get(pid);
+            if(node == null) { // insert
+                if(map.size() >= numPages) { // 插入前先驱逐
+                    evictPage();
+                }
+                node = new LRUDNode(pid, Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid),
+                        tid, perm, new ReentrantReadWriteLock());
+                map.put(pid, node);
+                node.next = head.next;
+                head.next.prev = node;
+                head.next = node;
+                node.prev = head;
+            } else {
+                node.prev.next = node.next;
+                node.next.prev = node.prev;
+                node.next = head.next;
+                head.next.prev = node;
+                head.next = node;
+                node.prev = head;
             }
-            node = new LRUDNode(pid, Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid),
-                    tid, perm, new ReentrantReadWriteLock());
-            map.put(pid, node);
-            node.next = head.next;
-            head.next.prev = node;
-            head.next = node;
-            node.prev = head;
-        } else {
-            node.prev.next = node.next;
-            node.next.prev = node.prev;
-            node.next = head.next;
-            head.next.prev = node;
-            head.next = node;
-            node.prev = head;
-        }
-        Lock[] curLock = tpLockManage.holdTPLock(tid, pid); // 需要确切持有锁。
-        if(curLock != null) {
-            // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁，否则再请求写锁
-            if(perm == Permissions.READ_WRITE && curLock[0] != null && curLock[1] == null) {
-                Map<TransactionId, Lock[]> tls = tpLockManage.getAllTransactionAndLock(pid);
-                if(tls.size() == 1) { // 仅当前事务拥有，升级锁
-                    // 直接抛弃之前的锁（仅一个事务拥有锁(且是读锁)，所以不会发生线程无限期阻塞，且使用tryLock）
-                    tpLockManage.removeTPLock(tid, pid);
-                    ReentrantReadWriteLock newLock = new ReentrantReadWriteLock();
-                    newLock.writeLock().lock();
-                    tpLockManage.addTPLock(tid, pid, newLock.writeLock());
-                    node.lock = newLock;
-                    mapMonitor.unlock();
-                } else {
-                    mapMonitor.unlock();
-                    if(!accessLock(node.lock.writeLock(), TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) {
-                        throw new TransactionAbortedException(); // 死锁
+            Lock curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
+            if(curLock != null) {
+                // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁，否则再请求写锁
+                if(perm == Permissions.READ_WRITE && curLock instanceof ReentrantReadWriteLock.ReadLock) {
+                    Map<TransactionId, Lock> tls = tpLockManage.getAllTransactionAndLock(pid);
+                    if(tls.size() == 1) { // 仅当前事务拥有，升级锁
+                        // 不能够使用之前的锁了（因为读锁可能没有释放）
+                        tpLockManage.removeTPLock(tid, pid);
+                        ReentrantReadWriteLock newLock = new ReentrantReadWriteLock();
+                        newLock.writeLock().lock(); // 不会阻塞
+                        tpLockManage.addTPLock(tid, pid, newLock.writeLock());
+                        node.lock = newLock;
+                        mapMonitor.unlock();
+                    } else {
+                        mapMonitor.unlock();
+                        // 重试（等待至可以升级锁），超过一定时间认为发生了死锁
+                        success = false;
+                        if(System.currentTimeMillis() - startTime > TIMEOUT_MILLISECONDS)
+                            throw new TransactionAbortedException(); // 认为死锁
                     }
-                    tpLockManage.addTPLock(tid, pid, node.lock.writeLock());
+                } else {
+                    // 不需要做什么
+                    mapMonitor.unlock();
                 }
             } else {
                 mapMonitor.unlock();
+                // 需要解决的问题是：获取锁（try获取，超时认为是死锁，抛异常）
+                // 获取锁后，页面不一定还在，不过目前这并不是问题。
+                if(!accessLock(perm == Permissions.READ_ONLY ?
+                                node.lock.readLock() : node.lock.writeLock(),
+                        TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) {
+                    throw new TransactionAbortedException(); // 认为死锁
+                }
+                tpLockManage.addTPLock(tid, pid,
+                        perm == Permissions.READ_ONLY ? node.lock.readLock() : node.lock.writeLock());
             }
-        } else {
-            mapMonitor.unlock();
-            // 需要解决的问题是：获取锁（try获取，超时认为是死锁，抛异常）
-            // 获取锁后，页面不一定还在，不过目前这并不是问题。
-            if(!accessLock(perm == Permissions.READ_ONLY ?
-                    node.lock.readLock() : node.lock.writeLock(),
-                    TIMEOUT_MILLISECONDS, TimeUnit.MILLISECONDS)) {
-                throw new TransactionAbortedException(); // 死锁
+            if(success) {
+                return node.val;
+            } else {
+                try {
+                    Thread.sleep(200);
+                } catch (InterruptedException e) {
+                    System.out.println("getPage: sleep error " + e.getMessage());
+                }
             }
-            tpLockManage.addTPLock(tid, pid,
-                    perm == Permissions.READ_ONLY ? node.lock.readLock() : node.lock.writeLock());
         }
-        return node.val;
     }
 
     // 尝试以指定时间访问锁，true成功，false失败（不抛异常）
@@ -415,7 +429,7 @@ public class BufferPool {
                     map.remove(p.key);
                     p.prev.next = p.next;
                     p.next.prev = p.prev;
-                    tpLockManage.discardPageAllTPLock(page.getId());
+                    // 驱逐clean page时，不需要管页面上的事务和锁。
                     return;
                 }
                 p = p.prev;

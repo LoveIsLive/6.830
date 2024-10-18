@@ -185,10 +185,14 @@ public class BTreeFile implements DbFile {
 	 * 
 	 */
 	private BTreeLeafPage findLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreePageId pid, Permissions perm,
-                                       Field f)
-					throws DbException, TransactionAbortedException {
+                                       Field f) throws DbException, TransactionAbortedException {
 		// some code goes here
-        return null;
+		int pgcateg = pid.pgcateg();
+		if(pgcateg == BTreePageId.INTERNAL) {
+			BTreeInternalPage curPage = (BTreeInternalPage) getPage(tid, dirtypages, pid, perm);
+			curPage.iterator();
+		}
+		return null;
 	}
 	
 	/**
@@ -406,6 +410,7 @@ public class BTreeFile implements DbFile {
 		}
 		else {
 			Page p = Database.getBufferPool().getPage(tid, pid, perm);
+			// 直接把写访问的页当作脏页了。
 			if(perm == Permissions.READ_WRITE) {
 				dirtypages.put(pid, p);
 			}
