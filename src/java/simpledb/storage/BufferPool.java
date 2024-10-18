@@ -53,6 +53,7 @@ public class BufferPool {
     private final ReentrantLock mapMonitor = new ReentrantLock();
     // 对map操作加锁，也就意味着对LRU队列操作加锁
     private final TransactionPageLockManage tpLockManage = new TransactionPageLockManage();
+    private final PageRWLockManage pageRWLockManage = new PageRWLockManage();
     private static final int TIMEOUT_MILLISECONDS = 1500; // 认为死锁超时的时间
     private final Random retryRandom = new Random();
     private final Random randomTimeout = new Random();
@@ -137,7 +138,7 @@ public class BufferPool {
                 node.prev = head;
             }
             Lock curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
-            ReadWriteLock curRWLock = PageRWLockManage.getRWLock(pid);
+            ReadWriteLock curRWLock = pageRWLockManage.getRWLock(pid);
             if(curLock != null) {
                 // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁
                 if(perm == Permissions.READ_WRITE && curLock instanceof ReentrantReadWriteLock.ReadLock) {
@@ -145,11 +146,11 @@ public class BufferPool {
                     if(tls.size() == 1) { // 仅当前事务拥有，升级锁。
                         // 直接抛弃之前的读写锁，改用新的读写锁（其他等待之前锁的事务都将失败重试）
                         // （而非释放读锁，再竞争写锁；这可能会导致锁被其他事务给抢占，破坏一致性）
-                        ReadWriteLock newLock = PageRWLockManage.updateRWLock(pid);
+                        ReadWriteLock newLock = pageRWLockManage.updateRWLock(pid);
                         newLock.writeLock().lock(); // 不会阻塞
                         tpLockManage.addTPLock(tid, pid, newLock.writeLock());
                         mapMonitor.unlock();
-                        System.out.println("事务" + tid.getId()  + "升级锁");
+                        System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
                     } else {
                         mapMonitor.unlock();
                         // 重试（等待至可以升级锁），超过一定时间认为发生了死锁
@@ -167,7 +168,7 @@ public class BufferPool {
                         200 + retryRandom.nextInt(50), TimeUnit.MILLISECONDS)) {
                     tpLockManage.addTPLock(tid, pid,
                             perm == Permissions.READ_ONLY ? curRWLock.readLock() : curRWLock.writeLock());
-                    System.out.println("事务: " + tid.getId() + ": " + "获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
+                    System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
                 } else {
                     success = false;
                     if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))

@@ -16,6 +16,8 @@ import simpledb.storage.HeapPageId;
 import simpledb.storage.PageId;
 import simpledb.transaction.TransactionId;
 
+// 本测试用例将一个事务运行在多个线程，导致出错！！！
+
 public class DeadlockTest extends TestUtil.CreateHeapFile {
   private PageId p0;
     private PageId p1;
