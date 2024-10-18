@@ -11,6 +11,8 @@ import java.util.concurrent.locks.ReentrantReadWriteLock;
 /*
     事务-页面-锁的管理，一个事务在一个页面某一时刻只能拥有一个锁（读锁 or 写锁）
     NOTE: 事务-页面，页面不一定在缓冲区（由于驱逐clean page）
+
+    假设一个事务仅在一个线程下处理。否则unlock时会出错。（无法通过DeadlockTest和BTreeDeadlockTest单元测试）
 */
 
 public class TransactionPageLockManage {

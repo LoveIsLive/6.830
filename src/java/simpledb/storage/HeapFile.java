@@ -166,7 +166,7 @@ public class HeapFile implements DbFile {
                 res.add(page);
                 return res;
             } else {
-                // 之前没有锁，才可以提前释放。一个事务在一个线程内处理。
+                // 之前没有锁，才可以提前释放。假设一个事务在一个线程内处理。
                 if(!prevHasLock) {
                     bufferPool.unsafeReleasePage(tid, pageId);
                 }
