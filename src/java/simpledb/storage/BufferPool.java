@@ -16,10 +16,7 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
+import java.util.concurrent.locks.*;
 
 /**
  * BufferPool manages the reading and writing of pages into memory from
@@ -52,8 +49,8 @@ public class BufferPool {
     private final Map<PageId, LRUDNode> map;
     private final ReentrantLock mapMonitor = new ReentrantLock();
     // 对map操作加锁，也就意味着对LRU队列操作加锁
-    private final TransactionPageLockManage tpLockManage = new TransactionPageLockManage();
-    private final PageRWLockManage pageRWLockManage = new PageRWLockManage();
+    private final TransactionPageLockManage tpLockManage;
+    private final PageRWLockManage pageRWLockManage;
     private static final int TIMEOUT_MILLISECONDS = 1500; // 认为死锁超时的时间
     private final Random retryRandom = new Random();
     private final Random randomTimeout = new Random();
@@ -82,10 +79,16 @@ public class BufferPool {
         tail = new LRUDNode();
         head.next = tail;
         tail.prev = head;
+        this.pageRWLockManage = new PageRWLockManage();
+        this.tpLockManage = new TransactionPageLockManage(this.pageRWLockManage);
     }
 
     public TransactionPageLockManage getTpLockManage() {
         return tpLockManage;
+    }
+
+    public PageRWLockManage getPageRWLockManage() {
+        return pageRWLockManage;
     }
 
     public static int getPageSize() {
@@ -137,18 +140,19 @@ public class BufferPool {
                 head.next = node;
                 node.prev = head;
             }
-            Lock curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
-            ReadWriteLock curRWLock = pageRWLockManage.getRWLock(pid);
+            TransactionPageLockManage.LockInfo curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
+            StampedLock curStampLock = pageRWLockManage.getRWLock(pid);
             if(curLock != null) {
                 // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁
-                if(perm == Permissions.READ_WRITE && curLock instanceof ReentrantReadWriteLock.ReadLock) {
-                    Map<TransactionId, Lock> tls = tpLockManage.getAllTransactionAndLock(pid);
+                if(perm == Permissions.READ_WRITE && curLock.getPerm() == Permissions.READ_ONLY) {
+                    Map<TransactionId, TransactionPageLockManage.LockInfo> tls = tpLockManage.getAllTransactionAndLock(pid);
                     if(tls.size() == 1) { // 仅当前事务拥有，升级锁。
-                        // 直接抛弃之前的读写锁，改用新的读写锁（其他等待之前锁的事务都将失败重试）
-                        // （而非释放读锁，再竞争写锁；这可能会导致锁被其他事务给抢占，破坏一致性）
-                        ReadWriteLock newLock = pageRWLockManage.updateRWLock(pid);
-                        newLock.writeLock().lock(); // 不会阻塞
-                        tpLockManage.addTPLock(tid, pid, newLock.writeLock());
+                        long newStamp = curStampLock.tryConvertToWriteLock(curLock.getStamp()); // 必定成功
+                        if(newStamp == 0) {
+                            throw new RuntimeException("升级锁失败, 出现未知情况错误");
+                        }
+                        curLock.setStamp(newStamp);
+                        curLock.setPerm(perm);
                         mapMonitor.unlock();
                         System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
                     } else {
@@ -164,10 +168,9 @@ public class BufferPool {
                 }
             } else {
                 mapMonitor.unlock();
-                if(accessLock(perm == Permissions.READ_ONLY ? curRWLock.readLock() : curRWLock.writeLock(),
-                        200 + retryRandom.nextInt(50), TimeUnit.MILLISECONDS)) {
-                    tpLockManage.addTPLock(tid, pid,
-                            perm == Permissions.READ_ONLY ? curRWLock.readLock() : curRWLock.writeLock());
+                long stamp = 0;
+                if((stamp = accessLock(curStampLock, perm,200 + retryRandom.nextInt(50), TimeUnit.MILLISECONDS)) != 0) {
+                    tpLockManage.addTPLock(tid, pid, stamp, perm);
                     System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
                 } else {
                     success = false;
@@ -194,14 +197,15 @@ public class BufferPool {
         return node;
     }
 
-    // 尝试以指定时间访问锁，true成功，false失败（不抛异常）
-    private boolean accessLock(Lock lock, long time, TimeUnit timeUnit) {
+    // 尝试以指定时间访问锁
+    private long accessLock(StampedLock stampedLock, Permissions perm, long time, TimeUnit timeUnit) {
         try {
-            return lock.tryLock(time, timeUnit);
+            return perm == Permissions.READ_ONLY ? stampedLock.tryReadLock(time, timeUnit) :
+                    stampedLock.tryWriteLock(time, timeUnit);
         } catch (InterruptedException e) {
             System.out.println("accessLock fail: " + e.getMessage());
         }
-        return false;
+        return 0; // 表示失败
     }
 
     // 随机化超时时间

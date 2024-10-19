@@ -170,6 +170,7 @@ public class HeapFile implements DbFile {
                 if(!prevHasLock) {
                     bufferPool.unsafeReleasePage(tid, pageId);
                 }
+                // 若一个事务在多个线程处理,则不能释放锁(因为不知道是否有其他线程获取了锁而访问页面). 测试用例并无出现这种情况.
                 idx++; // 访问下一页
             }
         }
