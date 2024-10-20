@@ -295,7 +295,7 @@ public class BufferPool {
         // completed!
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
         List<Page> dirtyPages = dbFile.insertTuple(tid, t);
-        writeDirtyPagesToBP(dirtyPages);
+        writeDirtyPagesToBP(tid, dirtyPages);
     }
 
     /**
@@ -316,13 +316,14 @@ public class BufferPool {
         // completed!
         DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
         List<Page> dirtyPages = dbFile.deleteTuple(tid, t);
-        writeDirtyPagesToBP(dirtyPages);
+        writeDirtyPagesToBP(tid, dirtyPages);
     }
 
-    private void writeDirtyPagesToBP(List<Page> dirtyPages) throws DbException {
+    private void writeDirtyPagesToBP(TransactionId tid, List<Page> dirtyPages) throws DbException {
         mapMonitor.lock();
         try {
             for (Page dirtyPage : dirtyPages) {
+                dirtyPage.markDirty(true, tid); // 标记
                 PageId pid = dirtyPage.getId();
                 // 不在bp中了
                 if(!(map.containsKey(pid) && map.get(pid).val == dirtyPage)) {
@@ -364,9 +365,11 @@ public class BufferPool {
         mapMonitor.lock();
         try {
             LRUDNode node = map.get(pid);
-            node.prev.next = node.next;
-            node.next.prev = node.prev;
-            map.remove(pid);
+            if(node != null) {
+                node.prev.next = node.next;
+                node.next.prev = node.prev;
+                map.remove(pid);
+            }
         } finally {
             mapMonitor.unlock();
         }

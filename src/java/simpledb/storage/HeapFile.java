@@ -161,8 +161,6 @@ public class HeapFile implements DbFile {
             if(page.getNumEmptySlots() > 0) {
                 page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE); // 再以写访问
                 page.insertTuple(t);
-                // 虽然标记为脏，但页面不一定在缓冲区中，需要Bufferpool来处理
-                page.markDirty(true, tid);
                 res.add(page);
                 return res;
             } else {
@@ -185,8 +183,6 @@ public class HeapFile implements DbFile {
         PageId pageId = t.getRecordId().getPageId();
         HeapPage page = (HeapPage) bufferPool.getPage(tid, pageId, Permissions.READ_WRITE);
         page.deleteTuple(t);
-        // 虽然标记为脏，但页面不一定在缓冲区中，需要Bufferpool来处理
-        page.markDirty(true, tid);
         res.add(page);
         return res;
     }

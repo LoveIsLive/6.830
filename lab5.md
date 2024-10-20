@@ -119,7 +119,6 @@ be important for the code to function correctly in future labs.
 
 Implement `BTreeFile.findLeafPage()`.
 
-
 After completing this exercise, you should be able to pass all the unit tests
 in `BTreeFileReadTest.java` and the system tests in `BTreeScanTest.java`.
 
@@ -135,16 +134,14 @@ find the correct leaf page into which we should insert the tuple. However, each
 page has a limited number of slots and we need to be able to insert tuples even
 if the corresponding leaf page is full.
 
-
 As described in the textbook, attempting to insert a tuple into a full leaf page
 should cause that page to split so that the tuples are evenly distributed
 between the two new pages. Each time a leaf page splits, a new entry
-corresponding to the first tuple in the second page will need to be added to the
+corresponding to the **first tuple in the second page** will need to be added to the
 parent node. Occasionally, the internal node may also be full and unable to
 accept new entries. In that case, the parent should split and add a new entry to
 its parent. This may cause recursive splits and ultimately the creation of a new
 root node.
-
 
 In this exercise you will implement `splitLeafPage()` and `splitInternalPage()`
 in `BTreeFile.java`. If the page being split is the root page, you will need to
@@ -211,7 +208,7 @@ in handy.  Each time you fetch a page, `BTreeFile.getPage()` will check to see
 if the page is already stored in the local cache (`dirtypages`), and if it can't
 find the requested page there, it fetches it from the buffer pool.
 `BTreeFile.getPage()` also adds pages to the `dirtypages` cache if they are
-fetched with read-write permission, since presumably they will soon be dirtied.
+fetched with read-write permission, since **presumably** they will soon be dirtied.
 One advantage of this approach is that it prevents loss of updates if the same
 pages are accessed multiple times during a single tuple insertion or deletion.
 

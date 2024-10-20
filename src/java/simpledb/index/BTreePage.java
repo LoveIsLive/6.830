@@ -144,5 +144,7 @@ public abstract class BTreePage implements Page {
 	 */
 	public abstract boolean isSlotUsed(int i);
 
+	// 将数据全部清0
+	public abstract void clearPage();
 }
 
