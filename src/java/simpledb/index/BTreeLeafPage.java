@@ -529,6 +529,20 @@ public class BTreeLeafPage extends BTreePage {
         this.rightSibling = 0;
         Arrays.fill(header, (byte) 0);
     }
+
+    // 便于调试
+    @Override
+    public String toString() {
+        Iterator<Tuple> entry = iterator();
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        while (entry.hasNext()) {
+            sb.append(entry.next().getField(keyField)).append(' ');
+            n++;
+        }
+        sb.append(" 共").append(n).append("项");
+        return sb.toString();
+    }
 }
 
 /**

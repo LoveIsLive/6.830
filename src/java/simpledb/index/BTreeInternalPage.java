@@ -683,6 +683,20 @@ public class BTreeInternalPage extends BTreePage {
         Arrays.fill(this.header, (byte) 0);
         this.childCategory = 0;
     }
+
+    // 便于调试
+    @Override
+    public String toString() {
+        Iterator<BTreeEntry> entry = iterator();
+        StringBuilder sb = new StringBuilder();
+        int n = 0;
+        while (entry.hasNext()) {
+            sb.append(entry.next()).append(' ');
+            n++;
+        }
+        sb.append(" 共").append(n).append("项");
+        return sb.toString();
+    }
 }
 
 /**

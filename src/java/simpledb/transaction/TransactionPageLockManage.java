@@ -75,8 +75,10 @@ public class TransactionPageLockManage {
         Map<PageId, LockInfo> nodeMap = tpMap.get(tid);
         if(nodeMap != null) {
             LockInfo lockInfo = nodeMap.get(pageId);
-            pageRWLockManage.getRWLock(pageId).unlock(lockInfo.stamp);
-            nodeMap.remove(pageId);
+            if(lockInfo != null) {
+                pageRWLockManage.getRWLock(pageId).unlock(lockInfo.stamp);
+                nodeMap.remove(pageId);
+            }
         }
         Map<TransactionId, LockInfo> map = ptMap.get(pageId);
         if(map != null) map.remove(tid);

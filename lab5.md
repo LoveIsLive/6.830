@@ -59,7 +59,6 @@ the first header page. This singleton page is implemented in
 classes, especially `BTreePage`, `BTreeInternalPage` and `BTreeLeafPage`. You
 will need to use these classes in your implementation of the B+Tree.
 
-
 Your first job is to implement the `findLeafPage()` function in
 `BTreeFile.java`. This function is used to find the appropriate leaf page given
 a particular key value, and is used for both searches and inserts. For example,
@@ -88,7 +87,6 @@ happens when the passed-in BTreePageId has `pgcateg()` equal to
 just fetch the page from the buffer pool and return it.  You do not need to
 confirm that it actually contains the provided key value f.
 
-
 Your `findLeafPage()` code must also handle the case when the provided key value
 f is null.  If the provided value is null, recurse on the left-most child every
 time in order to find the left-most leaf page. Finding the left-most leaf page
@@ -97,14 +95,12 @@ should return it.  As mentioned above, you can check the type of page using the
 `pgcateg()` function in `BTreePageId.java`. You can assume that only leaf and
 internal pages will be passed to this function.
 
-
 Instead of directly calling `BufferPool.getPage()` to get each internal page and
 leaf page, we recommend calling the wrapper function we have provided,
 `BTreeFile.getPage()`.  It works exactly like `BufferPool.getPage()`, but takes
 an extra argument to track the list of dirty pages.  This function will be
 important for the next two exercises in which you will actually update the data
 and therefore need to keep track of dirty pages.
-
 
 Every internal (non-leaf) page your `findLeafPage()` implementation visits
 should be fetched with READ_ONLY permission, except the returned leaf page,
@@ -238,6 +234,8 @@ Here is an informal list:
 6. A node has either all non-leaf children, or all leaf children.
 7. A non-root node cannot be less than half full.
 
+**第五条规则在key均相同的极端情况下，不可能成立！（因为允许重复的key）**
+
 We have implemented a mechanized check for all these properties in the file
 `BTreeChecker.java`. This method is also used to test your B+Tree implementation
 in the `systemtest/BTreeFileDeleteTest.java`. Feel free to add calls to this
@@ -287,7 +285,6 @@ src="redist_internal.png"><br> <i>Figure 3: Redistributing pages</i> </p>
 
 <p align="center"> <img width=500 src="merging_leaf.png"><br> <img width=500
 src="merging_internal.png"><br> <i>Figure 4: Merging pages</i> </p>
-
 As described in the textbook, attempting to delete a tuple from a leaf page that
 is less than half full should cause that page to either steal tuples from one of
 its siblings or merge with one of its siblings.  If one of the page's siblings

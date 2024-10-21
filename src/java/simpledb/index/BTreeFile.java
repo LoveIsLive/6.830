@@ -199,8 +199,17 @@ public class BTreeFile implements DbFile {
                 while (internalEntrys.hasNext()) {
                     BTreeEntry next = internalEntrys.next();
                     rightMost = next.getRightChild();
-                    if (next.getKey().compare(Op.GREATER_THAN_OR_EQ, f)) {
+                    if (f.compare(Op.LESS_THAN, next.getKey())) {
                         return findLeafPage(tid, dirtypages, next.getLeftChild(), perm, f);
+                    } else if (f.compare(Op.EQUALS, next.getKey())) {
+                        // 复杂情况，（因为允许key重复的原因，此时key左右两侧都可能出现
+                        BTreeLeafPage lPage = findLeafPage(tid, dirtypages, next.getLeftChild(), Permissions.READ_ONLY, f);
+                        Field lPageRightMost = lPage.reverseIterator().next().getField(keyField);
+                        if(f.compare(Op.LESS_THAN_OR_EQ, lPageRightMost)) { // 应该是左页
+                            return lPage;
+                        } else {
+                            return findLeafPage(tid, dirtypages, next.getRightChild(), perm, f);
+                        }
                     }
                 }
                 return findLeafPage(tid, dirtypages, rightMost, perm, f);
@@ -222,7 +231,7 @@ public class BTreeFile implements DbFile {
      * @return the left-most leaf page possibly containing the key field f
      * @see #findLeafPage(TransactionId, Map, BTreePageId, Permissions, Field)
      */
-    BTreeLeafPage findLeafPage(TransactionId tid, BTreePageId pid,
+    public BTreeLeafPage findLeafPage(TransactionId tid, BTreePageId pid,
                                Field f)
             throws DbException, TransactionAbortedException {
         return findLeafPage(tid, new HashMap<>(), pid, Permissions.READ_ONLY, f);
@@ -239,7 +248,7 @@ public class BTreeFile implements DbFile {
      *
      * @param tid        - the transaction id
      * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
-     * @param leafPage       - the leaf page to split
+     * @param leftPage       - the leaf page to split
      * @param field      - the key field of the tuple to be inserted after the split is complete. Necessary to know
      *                   which of the two pages to return.
      * @return the leaf page into which the new tuple should be inserted
@@ -248,7 +257,7 @@ public class BTreeFile implements DbFile {
      * @throws TransactionAbortedException
      * @see #getParentWithEmptySlots(TransactionId, Map, BTreePageId, Field)
      */
-    public BTreeLeafPage splitLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreeLeafPage leafPage, Field field)
+    public BTreeLeafPage splitLeafPage(TransactionId tid, Map<PageId, Page> dirtypages, BTreeLeafPage leftPage, Field field)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         //
@@ -259,35 +268,42 @@ public class BTreeFile implements DbFile {
         // the sibling pointers of all the affected leaf pages.  Return the page into which a
         // tuple with the given key field should be inserted.
         BTreeLeafPage rightPage = (BTreeLeafPage) getEmptyPage(tid, dirtypages, BTreePageId.LEAF);
-        int numTuples = leafPage.getNumTuples();
+        int numTuples = leftPage.getNumTuples();
         int half = numTuples % 2 == 0 ? numTuples / 2 : (numTuples + 1) / 2;
-        Iterator<Tuple> leftReverseIt = leafPage.reverseIterator();
-        int cnt = 0;
-        Field midKey = null;
-        while (cnt < half) {
-            Tuple next = leftReverseIt.next();
-            leafPage.deleteTuple(next); // 这样感觉性能不佳
-            rightPage.insertTuple(next); // 先删除再插入，保证recordId的正确
-            midKey = next.getField(leafPage.keyField);
-            cnt++;
+        // 虽然这里iterator顺序地迭代修改不成问题，但要注意一般不要在迭代中修改元素（这里iterator也不支持remove方法）
+        Iterator<Tuple> leftReverseIt = leftPage.reverseIterator();
+        ArrayList<Tuple> rightTuples = new ArrayList<>(half);
+        while (half > 0) {
+            rightTuples.add(leftReverseIt.next());
+            half--;
         }
 
-        BTreeInternalPage parentPage = getParentWithEmptySlots(tid, dirtypages, leafPage.getParentId(), midKey);
-        parentPage.insertEntry(new BTreeEntry(midKey, leafPage.getId(), rightPage.getId()));
+        for (Tuple tuple : rightTuples) {
+            leftPage.deleteTuple(tuple);
+            rightPage.insertTuple(tuple); // 先删除再插入，保证recordId的正确
+        }
+        Field midKey = rightTuples.get(rightTuples.size() - 1).getField(keyField);
+        BTreeInternalPage parentPage = getParentWithEmptySlots(tid, dirtypages, leftPage.getParentId(), midKey);
+        // 这个parentPage是要容乃新项的页面，但可能不是leftPage原来的parent，可能为leftPage的parent分裂后的右兄弟
+        if(leftPage.getParentId().getPageNumber() == parentPage.getId().getPageNumber()) {
+            parentPage.insertEntry(new BTreeEntry(midKey, leftPage.getId(), rightPage.getId()));
+        } else {
+            System.out.println("发生预期情况: leafPage.getParentId().getPageNumber() != parentPage.getId().getPageNumber()");
+            BTreePageId leftMostChild = parentPage.iterator().next().getLeftChild();
+            parentPage.insertEntry(new BTreeEntry(midKey, rightPage.getId(), leftMostChild));
+        }
+        rightPage.setParentId(parentPage.getId());
 
-        BTreePageId originRightSiblingId = leafPage.getRightSiblingId();
+        BTreePageId originRightSiblingId = leftPage.getRightSiblingId();
         rightPage.setRightSiblingId(originRightSiblingId);
         if(originRightSiblingId != null) {
             BTreeLeafPage page = (BTreeLeafPage) getPage(tid, dirtypages, originRightSiblingId, Permissions.READ_WRITE);
             page.setLeftSiblingId(rightPage.getId());
         }
-        leafPage.setRightSiblingId(rightPage.getId());
-        rightPage.setLeftSiblingId(leafPage.getId());
+        leftPage.setRightSiblingId(rightPage.getId());
+        rightPage.setLeftSiblingId(leftPage.getId());
 
-        leafPage.setParentId(parentPage.getId());
-        rightPage.setParentId(parentPage.getId());
-
-        return field.compare(Op.LESS_THAN_OR_EQ, midKey) ? leafPage : rightPage;
+        return field.compare(Op.LESS_THAN_OR_EQ, midKey) ? leftPage : rightPage;
     }
 
     /**
@@ -301,7 +317,7 @@ public class BTreeFile implements DbFile {
      *
      * @param tid        - the transaction id
      * @param dirtypages - the list of dirty pages which should be updated with all new dirty pages
-     * @param leafPage       - the internal page to split
+     * @param leftPage       - the internal page to split
      * @param field      - the key field of the entry to be inserted after the split is complete. Necessary to know
      *                   which of the two pages to return.
      * @return the internal page into which the new entry should be inserted
@@ -312,7 +328,7 @@ public class BTreeFile implements DbFile {
      * @see #updateParentPointers(TransactionId, Map, BTreeInternalPage)
      */
     public BTreeInternalPage splitInternalPage(TransactionId tid, Map<PageId, Page> dirtypages,
-                                               BTreeInternalPage leafPage, Field field)
+                                               BTreeInternalPage leftPage, Field field)
             throws DbException, IOException, TransactionAbortedException {
         // some code goes here
         //
@@ -324,27 +340,34 @@ public class BTreeFile implements DbFile {
         // will be useful here.  Return the page into which an entry with the given key field
         // should be inserted.
         BTreeInternalPage rightPage = (BTreeInternalPage) getEmptyPage(tid, dirtypages, BTreePageId.INTERNAL);
-        int numEntries = leafPage.getNumEntries();
+        int numEntries = leftPage.getNumEntries();
         int half = (numEntries % 2 == 0 ? numEntries / 2 : (numEntries + 1) / 2) - 1;
-        Iterator<BTreeEntry> leftReverseIt = leafPage.reverseIterator();
-        int cnt = 0;
-        while (cnt < half) {
-            BTreeEntry next = leftReverseIt.next();
-            leafPage.deleteKeyAndRightChild(next);
-            rightPage.insertEntry(next); // 先删除再插入，保证recordId的正确
-            cnt++;
+        Iterator<BTreeEntry> leftReverseIt = leftPage.reverseIterator();
+        ArrayList<BTreeEntry> rightEntrys = new ArrayList<>(half);
+        while (half > 0) {
+            rightEntrys.add(leftReverseIt.next());
+            half--;
         }
         BTreeEntry midEntry = leftReverseIt.next();
-        leafPage.deleteKeyAndRightChild(midEntry);
+        for (BTreeEntry entry : rightEntrys) {
+            leftPage.deleteKeyAndRightChild(entry);
+            rightPage.insertEntry(entry); // 先删除再插入，保证recordId的正确
+        }
+        leftPage.deleteKeyAndRightChild(midEntry);
 
-        BTreeInternalPage parentPage = getParentWithEmptySlots(tid, dirtypages, leafPage.getParentId(), midEntry.getKey());
-        parentPage.insertEntry(new BTreeEntry(midEntry.getKey(), leafPage.getId(), rightPage.getId()));
-
-        leafPage.setParentId(parentPage.getId()); // parent id可能已经更新（由于新的root page）
+        BTreeInternalPage parentPage = getParentWithEmptySlots(tid, dirtypages, leftPage.getParentId(), midEntry.getKey());
+        // 这个parentPage是要容乃新项的页面，但可能不是leftPage原来的parent，可能为leftPage的parent分裂后的右兄弟
+        if(leftPage.getParentId().getPageNumber() == parentPage.getId().getPageNumber()) {
+            parentPage.insertEntry(new BTreeEntry(midEntry.getKey(), leftPage.getId(), rightPage.getId()));
+        } else {
+            System.out.println("发生预期情况 leafPage.getParentId().getPageNumber() != parentPage.getId().getPageNumber()");
+            BTreePageId leftMostChild = parentPage.iterator().next().getLeftChild();
+            parentPage.insertEntry(new BTreeEntry(midEntry.getKey(), rightPage.getId(), leftMostChild));
+        }
+        updateParentPointers(tid, dirtypages, rightPage);
         rightPage.setParentId(parentPage.getId());
-        updateParentPointers(tid, dirtypages, rightPage); // 更新新分裂页面的子页面的parent指针
 
-        return field.compare(Op.LESS_THAN_OR_EQ, midEntry.getKey()) ? leafPage : rightPage;
+        return field.compare(Op.LESS_THAN_OR_EQ, midEntry.getKey()) ? leftPage : rightPage;
     }
 
     /**
@@ -626,15 +649,17 @@ public class BTreeFile implements DbFile {
         // the corresponding parent entry.
         int pageNeedTupleNum = (page.getNumTuples() + sibling.getNumTuples()) / 2 - page.getNumTuples();
         Iterator<Tuple> sibIt = isRightSibling ? sibling.iterator() : sibling.reverseIterator();
-        Tuple secondFirst = null;
+        ArrayList<Tuple> sibDeleteTuples = new ArrayList<>(pageNeedTupleNum);
         while (pageNeedTupleNum > 0) {
-            Tuple next = sibIt.next();
-            sibling.deleteTuple(next); // 先删除保证recordId正确
-            page.insertTuple(next);
-            secondFirst = next;
+            sibDeleteTuples.add(sibIt.next());
             pageNeedTupleNum--;
         }
-        if(isRightSibling) secondFirst = sibIt.next();
+        Tuple secondFirst = sibIt.next();
+        if(!isRightSibling) secondFirst = sibDeleteTuples.get(sibDeleteTuples.size() - 1);
+        for (Tuple deleteTuple : sibDeleteTuples) {
+            sibling.deleteTuple(deleteTuple);
+            page.insertTuple(deleteTuple);
+        }
         entry.setKey(secondFirst.getField(keyField));
         parent.updateEntry(entry);
     }
@@ -716,7 +741,7 @@ public class BTreeFile implements DbFile {
         Iterator<BTreeEntry> leftSibIt = leftSibling.reverseIterator();
         Field nextKey = parentEntry.getKey();
         ArrayList<BTreeEntry> sibDeleteEntrys = new ArrayList<>(pageNeedEntryNum);
-        // 尽量不在迭代中删除元素
+        // 不在迭代中删除元素
         while (pageNeedEntryNum > 0) {
             sibDeleteEntrys.add(leftSibIt.next());
             pageNeedEntryNum--;
@@ -730,7 +755,6 @@ public class BTreeFile implements DbFile {
             pageNeedEntryNum--;
         }
         updateParentPointers(tid, dirtypages, leftSibling);
-        updateParentPointers(tid, dirtypages, page);
         parentEntry.setKey(nextKey);
         parent.updateEntry(parentEntry);
     }
@@ -776,7 +800,6 @@ public class BTreeFile implements DbFile {
             nextKey = sibLeftMost.getKey();
             pageNeedEntryNum--;
         }
-        updateParentPointers(tid, dirtypages, rightSibling);
         updateParentPointers(tid, dirtypages, page);
         parentEntry.setKey(nextKey);
         parent.updateEntry(parentEntry);
@@ -819,8 +842,8 @@ public class BTreeFile implements DbFile {
             BTreeLeafPage page = (BTreeLeafPage) getPage(tid, dirtypages, rrPageId, Permissions.READ_WRITE);
             page.setLeftSiblingId(leftPage.getId());
         }
-        rightPage.clearPage();
         setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+        rightPage.clearPage();
         deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
     }
 
@@ -870,8 +893,8 @@ public class BTreeFile implements DbFile {
             insertCnt--;
         }
         updateParentPointers(tid, dirtypages, leftPage);
-        rightPage.clearPage();
         setEmptyPage(tid, dirtypages, rightPage.getId().getPageNumber());
+        rightPage.clearPage();
         deleteParentEntry(tid, dirtypages, leftPage, parent, parentEntry);
     }
 
@@ -911,7 +934,7 @@ public class BTreeFile implements DbFile {
             }
             BTreeRootPtrPage rootPtr = (BTreeRootPtrPage) getPage(tid, dirtypages, rootPtrId, Permissions.READ_WRITE);
             leftPage.setParentId(rootPtrId);
-            rootPtr.setRootId(leftPage.getId());
+            rootPtr.setRootId(leftPage.getId()); // root must be an internal node or leaf node
 
             // release the parent page for reuse
             setEmptyPage(tid, dirtypages, parent.getId().getPageNumber());
@@ -962,7 +985,7 @@ public class BTreeFile implements DbFile {
      * @throws IOException
      * @throws TransactionAbortedException
      */
-    BTreeRootPtrPage getRootPtrPage(TransactionId tid, Map<PageId, Page> dirtypages) throws DbException, IOException, TransactionAbortedException {
+    public BTreeRootPtrPage getRootPtrPage(TransactionId tid, Map<PageId, Page> dirtypages) throws DbException, IOException, TransactionAbortedException {
         synchronized (this) {
             if (f.length() == 0) {
                 // create the root pointer page and the root page

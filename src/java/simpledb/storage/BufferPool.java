@@ -1,5 +1,7 @@
 package simpledb.storage;
 
+import com.sun.jmx.snmp.SnmpNull;
+import javafx.scene.effect.Reflection;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
@@ -48,13 +50,13 @@ public class BufferPool {
     private final LRUDNode tail;
     private final Map<PageId, LRUDNode> map;
     private final ReentrantLock mapMonitor = new ReentrantLock();
-    // 对map操作加锁，也就意味着对LRU队列操作加锁
+    // 对map操作加锁，也就意味着对LRU队列操作加锁。BufferPool类每个方法不要sync，会死锁。并发操作均使用mapMonitor!!!
     private final TransactionPageLockManage tpLockManage;
     private final PageRWLockManage pageRWLockManage;
     private static final int TIMEOUT_MILLISECONDS = 1500; // 认为死锁超时的时间
     private final Random retryRandom = new Random();
     private final Random randomTimeout = new Random();
-    private final Map<Long, Integer> tRandomTimeout = new HashMap<>();
+    private final Map<Long, Integer> tRandomTimeout = new ConcurrentHashMap<>(); // 并发
 
     /** Bytes per page, including header. */
     private static final int DEFAULT_PAGE_SIZE = 4096;
@@ -154,13 +156,18 @@ public class BufferPool {
                         curLock.setStamp(newStamp);
                         curLock.setPerm(perm);
                         mapMonitor.unlock();
-                        System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
+//                        System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
                     } else {
                         mapMonitor.unlock();
                         // 重试（等待至可以升级锁），超过一定时间认为发生了死锁
                         success = false;
                         if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))
                             throw new TransactionAbortedException(); // 认为死锁
+                        try {
+                            Thread.sleep(100); // sleep a few
+                        } catch (InterruptedException e) {
+                            System.out.println("getPage, sleep exception: " + e.getMessage());
+                        }
                     }
                 } else {
                     // 不需要做什么
@@ -171,7 +178,7 @@ public class BufferPool {
                 long stamp = 0;
                 if((stamp = accessLock(curStampLock, perm,200 + retryRandom.nextInt(50), TimeUnit.MILLISECONDS)) != 0) {
                     tpLockManage.addTPLock(tid, pid, stamp, perm);
-                    System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
+//                    System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
                 } else {
                     success = false;
                     if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))
@@ -184,7 +191,7 @@ public class BufferPool {
         }
     }
 
-    // 插入一个新节点
+    // 插入一个新节点。内部方法，需要获得mapMonitor
     private LRUDNode lruInsertHead(LRUDNode node) throws DbException {
         if(map.size() >= numPages) { // 插入前先驱逐
             evictPage();
@@ -209,9 +216,10 @@ public class BufferPool {
     }
 
     // 随机化超时时间
-    private synchronized int getTransactionTimeout(long tid) {
+    private int getTransactionTimeout(long tid) {
         tRandomTimeout.putIfAbsent(tid, randomTimeout.nextInt(1000) + TIMEOUT_MILLISECONDS);
-        return tRandomTimeout.get(tid);
+        Integer res = tRandomTimeout.get(tid); // 以防并发问题
+        return res == null ? TIMEOUT_MILLISECONDS : res;
     }
 
     /**
@@ -258,7 +266,7 @@ public class BufferPool {
     public void transactionComplete(TransactionId tid, boolean commit) {
         // some code goes here
         // not necessary for lab1|lab2
-        System.out.println("commit: " + tid.getId() + " " + commit);
+//        System.out.println("commit: " + tid.getId() + " " + commit);
         if(commit) {
             try {
                 // 刷新脏页
@@ -340,7 +348,7 @@ public class BufferPool {
      * NB: Be careful using this routine -- it writes dirty data to disk so will
      *     break simpledb if running in NO STEAL mode.
      */
-    public synchronized void flushAllPages() throws IOException {
+    public void flushAllPages() throws IOException {
         // completed!
         mapMonitor.lock();
         try {
@@ -360,7 +368,7 @@ public class BufferPool {
         Also used by B+ tree files to ensure that deleted pages
         are removed from the cache so they can be reused safely
     */
-    public synchronized void discardPage(PageId pid) {
+    public void discardPage(PageId pid) {
         // completed!
         mapMonitor.lock();
         try {
@@ -375,7 +383,7 @@ public class BufferPool {
         }
     }
     // 废弃指定事务所弄脏的每一个页面
-    public synchronized void discardPages(TransactionId tid) {
+    public void discardPages(TransactionId tid) {
         mapMonitor.lock();
         try {
             LRUDNode p = head.next;
@@ -395,7 +403,7 @@ public class BufferPool {
      * Flushes a certain page to disk
      * @param pid an ID indicating the page to flush
      */
-    private synchronized void flushPage(PageId pid) throws IOException {
+    private void flushPage(PageId pid) throws IOException {
         // completed!
         mapMonitor.lock();
         try {
@@ -414,7 +422,7 @@ public class BufferPool {
 
     /** Write all pages of the specified transaction to disk.
      */
-    public synchronized void flushPages(TransactionId tid) throws IOException {
+    public void flushPages(TransactionId tid) throws IOException {
         // completed!
         // not necessary for lab1|lab2
         mapMonitor.lock();
@@ -436,7 +444,7 @@ public class BufferPool {
      * Discards a page from the buffer pool.
      * Flushes the page to disk to ensure dirty pages are updated on disk.
      */
-    private synchronized void evictPage() throws DbException {
+    private void evictPage() throws DbException {
         // completed!
         mapMonitor.lock();
         try {
