@@ -9,10 +9,10 @@ import simpledb.common.Type;
 import simpledb.execution.Predicate.Op;
 import simpledb.common.DbException;
 import simpledb.common.Debug;
-import simpledb.storage.BufferPool;
-import simpledb.storage.Field;
-import simpledb.storage.IntField;
-import simpledb.storage.RecordId;
+import simpledb.storage.*;
+
+
+// 可以得出children[i]一定是key[i]的右孩子，但children[i - 1]可能为空
 
 /**
  * Each instance of BTreeInternalPage stores data for one page of a BTreeFile and
@@ -42,7 +42,19 @@ public class BTreeInternalPage extends BTreePage {
 
         assert null == upperBound || null == prev || (prev.compare(Op.LESS_THAN_OR_EQ, upperBound));
 
-        assert !checkOccupancy || depth <= 0 || (getNumEntries() >= getMaxEntries() / 2);
+        assert !checkOccupancy || depth <= 0 || (getNumEntries() >= getMaxEntries() / 2); // !!! 一半的概念
+
+        Set<BTreeEntry> s1 = new HashSet<>();
+        Set<BTreeEntry> s2 = new HashSet<>();
+        Iterator<BTreeEntry> i1 = iterator();
+        while (i1.hasNext()) {
+            s1.add(i1.next());
+        }
+        Iterator<BTreeEntry> i2 = reverseIterator();
+        while (i2.hasNext()) {
+            s2.add(i2.next());
+        }
+        assert s1.equals(s2);
     }
 
     /**
@@ -689,6 +701,7 @@ public class BTreeInternalPage extends BTreePage {
     public String toString() {
         Iterator<BTreeEntry> entry = iterator();
         StringBuilder sb = new StringBuilder();
+        sb.append("thisPageId:").append(pid).append('\n');
         int n = 0;
         while (entry.hasNext()) {
             sb.append(entry.next()).append(' ');
@@ -723,6 +736,7 @@ class BTreeInternalPageIterator implements Iterator<BTreeEntry> {
                     return false;
                 }
             }
+            // 这是正确的！因为key和rightChild对应。
             while (true) {
                 int entry = curEntry++;
                 Field key = p.getKey(entry);
@@ -765,7 +779,9 @@ class BTreeInternalPageIterator implements Iterator<BTreeEntry> {
  */
 class BTreeInternalPageReverseIterator implements Iterator<BTreeEntry> {
     int curEntry;
+    int lastEntry;
     BTreePageId nextChildId = null;
+    Field key = null;
     BTreeEntry nextToReturn = null;
     final BTreeInternalPage p;
 
@@ -784,18 +800,33 @@ class BTreeInternalPageReverseIterator implements Iterator<BTreeEntry> {
         try {
             if (nextChildId == null) {
                 nextChildId = p.getChildId(curEntry);
+                key = p.getKey(curEntry); // curEntry=0, throw
+                lastEntry = curEntry;
                 if (nextChildId == null) {
                     return false;
                 }
             }
+            // 这个错误，不应该拿着rightChild去找 key和leftChild，它俩不是绑定的
+//            while (true) {
+//                int entry = curEntry--;
+//                Field key = p.getKey(entry);
+//                BTreePageId childId = p.getChildId(entry - 1);
+//                if (key != null && childId != null) {
+//                    nextToReturn = new BTreeEntry(key, childId, nextChildId);
+//                    nextToReturn.setRecordId(new RecordId(p.pid, entry));
+//                    nextChildId = childId;
+//                    return true;
+//                }
+//            }
             while (true) {
-                int entry = curEntry--;
-                Field key = p.getKey(entry);
-                BTreePageId childId = p.getChildId(entry - 1);
-                if (key != null && childId != null) {
+                curEntry--;
+                BTreePageId childId = p.getChildId(curEntry);
+                if (childId != null) {
                     nextToReturn = new BTreeEntry(key, childId, nextChildId);
-                    nextToReturn.setRecordId(new RecordId(p.pid, entry));
+                    nextToReturn.setRecordId(new RecordId(p.pid, lastEntry));
                     nextChildId = childId;
+                    lastEntry = curEntry;
+                    if(curEntry > 0) key = p.getKey(curEntry); // 否则会抛异常，被下面捕获，从而少一个开头元素
                     return true;
                 }
             }

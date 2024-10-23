@@ -1,5 +1,6 @@
 package simpledb.index;
 
+import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
 import simpledb.storage.Field;
@@ -40,8 +41,25 @@ public class BTreeChecker {
             this.ptrRight = base.getRightSiblingId();
         }
 
-        static SubtreeSummary checkAndMerge(SubtreeSummary accleft, SubtreeSummary right) {
+        static SubtreeSummary checkAndMerge(SubtreeSummary accleft, SubtreeSummary right, TransactionId tid) {
             assert(accleft.depth == right.depth);
+            if(!accleft.ptrRight.equals(right.leftmostId)) {
+                System.out.println(accleft.ptrRight);
+                try {
+                    BTreePageId pId = accleft.ptrRight;
+                    while (pId != null) {
+                        BTreeLeafPage page = (BTreeLeafPage) Database.getBufferPool().getPage(tid, pId, Permissions.READ_ONLY);
+                        System.out.println(page);
+                        pId = page.getRightSiblingId();
+                    }
+                    System.out.println("-------------------------------");
+                    BTreeLeafPage leftmostId = (BTreeLeafPage) Database.getBufferPool().getPage(tid, right.leftmostId, Permissions.READ_ONLY);
+                    System.out.println(leftmostId);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+                // 玛德少了一页，谁给我吃了？
+            }
             assert(accleft.ptrRight.equals(right.leftmostId));
             assert(accleft.rightmostId.equals(right.ptrLeft));
 
@@ -88,12 +106,28 @@ public class BTreeChecker {
 
         if (page.getId().pgcateg() == BTreePageId.LEAF) {
             BTreeLeafPage bpage = (BTreeLeafPage) page;
-            bpage.checkRep(bt.keyField(), lowerBound, upperBound, checkOccupancy, depth);
+            try {
+                bpage.checkRep(bt.keyField(), lowerBound, upperBound, checkOccupancy, depth);
+            } catch (Throwable e) {
+                System.out.println("-----------------------------------------------");
+                System.out.println("lowerBound: " + lowerBound + ", upperBound: " + upperBound);
+                System.out.println(bpage);
+                System.out.println("-----------------------------------------------");
+                throw new RuntimeException(e);
+            }
             return new SubtreeSummary(bpage, depth);
         } else if (page.getId().pgcateg() == BTreePageId.INTERNAL) {
 
             BTreeInternalPage ipage = (BTreeInternalPage) page;
-            ipage.checkRep(lowerBound, upperBound, checkOccupancy, depth);
+            try {
+                ipage.checkRep(lowerBound, upperBound, checkOccupancy, depth);
+            } catch (Throwable e) {
+                System.out.println("-----------------------------------------------");
+                System.out.println("lowerBound: " + lowerBound + ", upperBound: " + upperBound);
+                System.out.println(ipage);
+                System.out.println("-----------------------------------------------");
+                throw new RuntimeException(e);
+            }
 
             SubtreeSummary acc = null;
             BTreeEntry prev = null;
@@ -113,7 +147,7 @@ public class BTreeChecker {
                 SubtreeSummary currentSubTreeResult =
                         checkSubTree(bt, tid, dirtypages, curr.getLeftChild(), lowerBound, curr.getKey(), ipage.getId(),
                                 checkOccupancy, depth + 1);
-                acc = SubtreeSummary.checkAndMerge(acc, currentSubTreeResult);
+                acc = SubtreeSummary.checkAndMerge(acc, currentSubTreeResult, tid);
 
                 // need to move stuff for next iter:
                 lowerBound = curr.getKey();
@@ -121,7 +155,7 @@ public class BTreeChecker {
 
             SubtreeSummary lastRight = checkSubTree(bt, tid, dirtypages, curr.getRightChild(), lowerBound, upperBound,
                     ipage.getId(), checkOccupancy, depth + 1);
-            acc = SubtreeSummary.checkAndMerge(acc, lastRight);
+            acc = SubtreeSummary.checkAndMerge(acc, lastRight, tid);
 
             return acc;
         } else {

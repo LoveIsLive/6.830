@@ -312,4 +312,10 @@ public class BTreeHeaderPage implements Page {
 		}
 		return -1;
 	}
+
+	public void clearPage() {
+		this.prevPage = 0;
+		this.nextPage = 0;
+		Arrays.fill(header, (byte) 0);
+	}
 }

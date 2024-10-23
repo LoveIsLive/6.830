@@ -61,9 +61,22 @@ public class TransactionPageLockManage {
         this.pageRWLockManage = pageRWLockManage;
     }
 
+    // 保证可重入，新的stamp替代老的
     public synchronized void addTPLock(TransactionId tid, PageId pageId, long stamp, Permissions perm) {
         LockInfo lockInfo = new LockInfo(stamp, perm);
         tpMap.putIfAbsent(tid, new HashMap<>());
+        LockInfo prevLockInfo = tpMap.get(tid).get(pageId);
+        if(prevLockInfo != null) { // 可能重入，但perm必定均为读，不可能有写
+            System.out.println("发生情况：重入addTPLock");
+            assert prevLockInfo.perm == Permissions.READ_ONLY && perm == Permissions.READ_ONLY;
+            StampedLock stampedLock = pageRWLockManage.getRWLock(pageId);
+            try {
+                stampedLock.unlockRead(prevLockInfo.stamp); // 将之前的释放掉
+            } catch (IllegalMonitorStateException e) {
+                System.out.println("发生异常情况");
+                throw e;
+            }
+        }
         tpMap.get(tid).put(pageId, lockInfo);
 
         ptMap.putIfAbsent(pageId, new HashMap<>());
@@ -102,11 +115,6 @@ public class TransactionPageLockManage {
         Map<PageId, LockInfo> nodeMap = tpMap.get(tid);
         if(nodeMap == null) return null;
         return nodeMap.get(pageId);
-    }
-
-    // 返回所有锁定该页面的事务和锁
-    public synchronized Map<TransactionId, LockInfo> getAllTransactionAndLock(PageId pageId) {
-        return ptMap.get(pageId);
     }
 
 }

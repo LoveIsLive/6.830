@@ -4,6 +4,7 @@ import simpledb.storage.Field;
 import simpledb.storage.RecordId;
 
 import java.io.Serializable;
+import java.util.Objects;
 
 /**
  * Each instance of BTreeEntry stores one key and two child page ids. It is used
@@ -135,6 +136,18 @@ public class BTreeEntry implements Serializable {
 	public String toString() {
 		return "[" + leftChild.getPageNumber() + "|" + key + "|" + rightChild.getPageNumber() + "]";
 	}
-	
+
+	@Override
+	public boolean equals(Object o) {
+		if (this == o) return true;
+		if (o == null || getClass() != o.getClass()) return false;
+		BTreeEntry that = (BTreeEntry) o;
+		return Objects.equals(key, that.key) && Objects.equals(leftChild, that.leftChild) && Objects.equals(rightChild, that.rightChild) && Objects.equals(rid, that.rid);
+	}
+
+	@Override
+	public int hashCode() {
+		return Objects.hash(key, leftChild, rightChild);
+	}
 }
 

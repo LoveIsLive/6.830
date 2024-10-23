@@ -5,6 +5,7 @@ import simpledb.exception.TypeMismatchException;
 import java.io.Serializable;
 import java.util.Arrays;
 import java.util.Iterator;
+import java.util.Objects;
 
 /**
  * Tuple maintains information about the contents of a tuple. Tuples have a
@@ -126,5 +127,20 @@ public class Tuple implements Serializable {
     {
         // completed!
         this.tupleDesc = td;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Tuple tuple = (Tuple) o;
+        return Objects.equals(tupleDesc, tuple.tupleDesc) && Objects.equals(recordId, tuple.recordId) && Arrays.equals(fields, tuple.fields);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = 0;
+        result = 31 * result + Arrays.hashCode(fields);
+        return result;
     }
 }

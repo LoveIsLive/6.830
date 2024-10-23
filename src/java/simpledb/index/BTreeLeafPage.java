@@ -41,6 +41,18 @@ public class BTreeLeafPage extends BTreePage {
         assert null == upperBound || null == prev || (prev.compare(Predicate.Op.LESS_THAN_OR_EQ, upperBound));
 
         assert !checkoccupancy || depth <= 0 || (getNumTuples() >= getMaxTuples() / 2);
+
+        Set<Tuple> s1 = new HashSet<>();
+        Set<Tuple> s2 = new HashSet<>();
+        Iterator<Tuple> i1 = iterator();
+        while (i1.hasNext()) {
+            s1.add(i1.next());
+        }
+        Iterator<Tuple> i2 = reverseIterator();
+        while (i2.hasNext()) {
+            s2.add(i2.next());
+        }
+        assert s1.equals(s2);
     }
 
     /**
@@ -535,9 +547,12 @@ public class BTreeLeafPage extends BTreePage {
     public String toString() {
         Iterator<Tuple> entry = iterator();
         StringBuilder sb = new StringBuilder();
+        sb.append("leftSib:").append(leftSibling)
+                .append("; this:").append(pid.getPageNumber())
+                .append("; rightSib:").append(rightSibling).append('\n');
         int n = 0;
         while (entry.hasNext()) {
-            sb.append(entry.next().getField(keyField)).append(' ');
+            sb.append(BTreeUtility.tupleToList(entry.next())).append(' ');
             n++;
         }
         sb.append(" 共").append(n).append("项");

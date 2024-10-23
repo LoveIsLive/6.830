@@ -1,12 +1,10 @@
 package simpledb.storage;
 
-import com.sun.jmx.snmp.SnmpNull;
-import javafx.scene.effect.Reflection;
 import simpledb.common.Database;
 import simpledb.common.Permissions;
 import simpledb.common.DbException;
-import simpledb.common.DeadlockException;
-import simpledb.exception.RuntimeReadIOException;
+import simpledb.index.BTreeLeafPage;
+import simpledb.index.BTreeUtility;
 import simpledb.transaction.PageRWLockManage;
 import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
@@ -16,7 +14,6 @@ import java.io.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.*;
 
@@ -54,7 +51,6 @@ public class BufferPool {
     private final TransactionPageLockManage tpLockManage;
     private final PageRWLockManage pageRWLockManage;
     private static final int TIMEOUT_MILLISECONDS = 1500; // 认为死锁超时的时间
-    private final Random retryRandom = new Random();
     private final Random randomTimeout = new Random();
     private final Map<Long, Integer> tRandomTimeout = new ConcurrentHashMap<>(); // 并发
 
@@ -66,7 +62,7 @@ public class BufferPool {
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
-    public static final int DEFAULT_PAGES = 50;
+    public static final int DEFAULT_PAGES = 500;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -132,8 +128,13 @@ public class BufferPool {
             mapMonitor.lock(); // map lock!
             LRUDNode node = map.get(pid);
             if(node == null) { // insert
-                node = lruInsertHead(new LRUDNode(pid,
-                        Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid)));
+                try {
+                    node = lruInsertHead(new LRUDNode(pid,
+                            Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid)));
+                } catch (Throwable e) {
+                    mapMonitor.unlock(); // 任何可能出现错误的地方都要, try保证mapMonitor被正确释放
+                    throw e;
+                }
             } else {
                 node.prev.next = node.next;
                 node.next.prev = node.prev;
@@ -143,17 +144,15 @@ public class BufferPool {
                 node.prev = head;
             }
             TransactionPageLockManage.LockInfo curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
-            StampedLock curStampLock = pageRWLockManage.getRWLock(pid);
+            // curLock仍旧不能保证在一个事务多个线程处理时保持正确。因为curLock返回时，其他线程可能获得或释放它，这可能导致数据不一致。
+            // 对BTreeTest不影响（它一个事务只在一个线程执行）。
+            StampedLock curStampLock = pageRWLockManage.getRWLock(pid); // sync保证每个pid只会有一个stampedLock
             if(curLock != null) {
                 // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁
                 if(perm == Permissions.READ_WRITE && curLock.getPerm() == Permissions.READ_ONLY) {
-                    Map<TransactionId, TransactionPageLockManage.LockInfo> tls = tpLockManage.getAllTransactionAndLock(pid);
-                    if(tls.size() == 1) { // 仅当前事务拥有，升级锁。
-                        long newStamp = curStampLock.tryConvertToWriteLock(curLock.getStamp()); // 必定成功
-                        if(newStamp == 0) {
-                            throw new RuntimeException("升级锁失败, 出现未知情况错误");
-                        }
-                        curLock.setStamp(newStamp);
+                    long stamp = curStampLock.tryConvertToWriteLock(curLock.getStamp());
+                    if(stamp != 0) { // 升级成功
+                        curLock.setStamp(stamp);
                         curLock.setPerm(perm);
                         mapMonitor.unlock();
 //                        System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
@@ -176,8 +175,8 @@ public class BufferPool {
             } else {
                 mapMonitor.unlock();
                 long stamp = 0;
-                if((stamp = accessLock(curStampLock, perm,200 + retryRandom.nextInt(50), TimeUnit.MILLISECONDS)) != 0) {
-                    tpLockManage.addTPLock(tid, pid, stamp, perm);
+                if((stamp = accessLock(curStampLock, perm,200 + new Random().nextInt(50), TimeUnit.MILLISECONDS)) != 0) {
+                    tpLockManage.addTPLock(tid, pid, stamp, perm); // 保证可重入，新的stamp替代老的，并释放老的
 //                    System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
                 } else {
                     success = false;
@@ -186,21 +185,41 @@ public class BufferPool {
                 }
             }
             if(success) {
+                // 将所有写权限的页面全部标记为脏，以保证数据的一致性
+                if(perm == Permissions.READ_WRITE) {
+                    mapMonitor.lock();
+                    try {
+                        node.val.markDirty(true, tid);
+                        // 保证插入
+                        if(map.get(pid) != node) { // != node才能说明不在bp中了，而不是==null(会出现数据丢失) !!!!!!
+                            discardPage(pid); // 需先删除之前可能存在的（否则可能会死循环）
+                            lruInsertHead(node);
+                        }
+                        assert map.get(pid) == node;
+                    } finally {
+                        mapMonitor.unlock();
+                    }
+                }
                 return node.val;
             }
         }
     }
 
-    // 插入一个新节点。内部方法，需要获得mapMonitor
+    // 插入一个新节点。
     private LRUDNode lruInsertHead(LRUDNode node) throws DbException {
-        if(map.size() >= numPages) { // 插入前先驱逐
-            evictPage();
+        mapMonitor.lock();
+        try {
+            if(map.size() >= numPages) { // 插入前先驱逐
+                evictPage();
+            }
+            map.put(node.key, node);
+            node.next = head.next;
+            head.next.prev = node;
+            head.next = node;
+            node.prev = head;
+        } finally {
+            mapMonitor.unlock();
         }
-        map.put(node.key, node);
-        node.next = head.next;
-        head.next.prev = node;
-        head.next = node;
-        node.prev = head;
         return node;
     }
 
@@ -285,25 +304,25 @@ public class BufferPool {
 
     /**
      * Add a tuple to the specified table on behalf of transaction tid.  Will
-     * acquire a write lock on the page the tuple is added to and any other 
-     * pages that are updated (Lock acquisition is not needed for lab2). 
+     * acquire a write lock on the page the tuple is added to and any other
+     * pages that are updated (Lock acquisition is not needed for lab2).
      * May block if the lock(s) cannot be acquired.
-     * 
+     * <p>
      * Marks any pages that were dirtied by the operation as dirty by calling
-     * their markDirty bit, and adds versions of any pages that have 
-     * been dirtied to the cache (replacing any existing versions of those pages) so 
-     * that future requests see up-to-date pages. 
+     * their markDirty bit, and adds versions of any pages that have
+     * been dirtied to the cache (replacing any existing versions of those pages) so
+     * that future requests see up-to-date pages.
      *
-     * @param tid the transaction adding the tuple
+     * @param tid     the transaction adding the tuple
      * @param tableId the table to add the tuple to
-     * @param t the tuple to add
+     * @param t       the tuple to add
+     * @return
      */
-    public void insertTuple(TransactionId tid, int tableId, Tuple t)
+    public List<Page> insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // completed!
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
-        List<Page> dirtyPages = dbFile.insertTuple(tid, t);
-        writeDirtyPagesToBP(tid, dirtyPages);
+        return dbFile.insertTuple(tid, t);
     }
 
     /**
@@ -323,24 +342,7 @@ public class BufferPool {
         throws DbException, IOException, TransactionAbortedException {
         // completed!
         DbFile dbFile = Database.getCatalog().getDatabaseFile(t.getRecordId().getPageId().getTableId());
-        List<Page> dirtyPages = dbFile.deleteTuple(tid, t);
-        writeDirtyPagesToBP(tid, dirtyPages);
-    }
-
-    private void writeDirtyPagesToBP(TransactionId tid, List<Page> dirtyPages) throws DbException {
-        mapMonitor.lock();
-        try {
-            for (Page dirtyPage : dirtyPages) {
-                dirtyPage.markDirty(true, tid); // 标记
-                PageId pid = dirtyPage.getId();
-                // 不在bp中了
-                if(!(map.containsKey(pid) && map.get(pid).val == dirtyPage)) {
-                    lruInsertHead(new LRUDNode(dirtyPage.getId(), dirtyPage));
-                }
-            }
-        } finally {
-            mapMonitor.unlock();
-        }
+        dbFile.deleteTuple(tid, t);
     }
 
     /**
@@ -389,10 +391,15 @@ public class BufferPool {
             LRUDNode p = head.next;
             while (p != tail) {
                 Page page = p.val;
-                if(page.isDirty() == tid) {
-                    discardPage(page.getId());
+                if(tid.equals(page.isDirty())) {
+                    LRUDNode next = p.next;
+                    p.next.prev = p.prev;
+                    p.prev.next = p.next;
+                    map.remove(p.key);
+                    p = next;
+                } else {
+                    p = p.next;
                 }
-                p = p.next;
             }
         } finally {
             mapMonitor.unlock();
@@ -428,12 +435,18 @@ public class BufferPool {
         mapMonitor.lock();
         try {
             LRUDNode p = head.next;
+            int cnt = 0;
             while (p != tail) {
                 Page page = p.val;
-                if(page.isDirty() == tid) {
+                if(tid.equals(page.isDirty())) {
                     flushPage(page.getId());
                 }
                 p = p.next;
+                cnt++;
+                if(cnt > map.size() + 10) {
+                    System.out.println("LRU结构指针错误");
+                    assert false;
+                }
             }
         } finally {
             mapMonitor.unlock();
@@ -451,7 +464,7 @@ public class BufferPool {
             LRUDNode p = tail.prev;
             while (p != head) {
                 Page page = p.val;
-                if(page.isDirty() == null) { // 同时不能驱逐带有写锁得页面，写锁视为脏页
+                if(page.isDirty() == null) {
                     map.remove(p.key);
                     p.prev.next = p.next;
                     p.next.prev = p.prev;

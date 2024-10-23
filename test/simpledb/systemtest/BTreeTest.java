@@ -1,19 +1,20 @@
 package simpledb.systemtest;
 
 import simpledb.common.Database;
+import simpledb.common.DbException;
+import simpledb.common.Permissions;
 import simpledb.execution.IndexPredicate;
-import simpledb.index.BTreeFile;
-import simpledb.index.BTreeUtility;
+import simpledb.index.*;
 import simpledb.storage.*;
 
 import static org.junit.Assert.*;
+import static simpledb.index.BTreeUtility.printAllPages;
 
+import java.io.IOException;
 import java.io.PrintStream;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Random;
+import java.util.*;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ArrayBlockingQueue;
 
@@ -22,6 +23,7 @@ import org.junit.Test;
 
 import simpledb.index.BTreeUtility.*;
 import simpledb.execution.Predicate.Op;
+import simpledb.transaction.TransactionAbortedException;
 import simpledb.transaction.TransactionId;
 
 /**
@@ -40,6 +42,7 @@ public class BTreeTest extends SimpleDbTestBase {
 
         BTreeInserter bi = new BTreeInserter(bf, tupdata, insertedTuples);
         bi.start();
+//        bi.run();
         return bi;
     }
 
@@ -50,6 +53,7 @@ public class BTreeTest extends SimpleDbTestBase {
     public BTreeDeleter startDeleter(BTreeFile bf, BlockingQueue<List<Integer>> insertedTuples) {
         BTreeDeleter bd = new BTreeDeleter(bf, insertedTuples);
         bd.start();
+//        bd.run();
         return bd;
     }
 
@@ -60,7 +64,7 @@ public class BTreeTest extends SimpleDbTestBase {
             int cnt = 0;
             while (!thread.succeeded() && thread.getError() == null) {
                 cnt++;
-                if(cnt == 50) { // 输出一次。发生问题！！！
+                if(cnt == 50) { // 输出一次。可能发生问题！！！
                     System.out.println("waitForInserterThreads" + thread + "success: " + thread.succeeded() + ", error: " + thread.getError());
                 }
                 Thread.sleep(POLL_INTERVAL);
@@ -75,7 +79,7 @@ public class BTreeTest extends SimpleDbTestBase {
             int cnt = 0;
             while (!thread.succeeded() && thread.getError() == null) {
                 cnt++;
-                if(cnt == 50) { // 输出一次。发生问题！！！
+                if(cnt == 50) { // 输出一次。可能发生问题！！！
                     System.out.println("waitForDeleterThreads" + thread + "success: " + thread.succeeded() + ", error: " + thread.getError());
                 }
                 Thread.sleep(POLL_INTERVAL);
@@ -101,9 +105,15 @@ public class BTreeTest extends SimpleDbTestBase {
      */
     @Test
     public void testBigFile() throws Exception {
+        /*
+        * internalPage和leafPage最多都是124项。
+        *
+        *
+        * */
         // 重定位到文件
 //        System.setOut(new PrintStream(Files.newOutputStream(Paths.get("输出.txt")), true));
 //        System.setErr(new PrintStream(Files.newOutputStream(Paths.get("error.txt")), true));
+        System.out.println(Thread.currentThread());
 
         // For this test we will decrease the size of the Buffer Pool pages
         BufferPool.setPageSize(1024);
@@ -116,13 +126,14 @@ public class BTreeTest extends SimpleDbTestBase {
                 null, tuples, 0);
 
         // we will need more room in the buffer pool for this test
-        Database.resetBufferPool(500);
+//        Database.resetBufferPool(500);
 
         BlockingQueue<List<Integer>> insertedTuples = new ArrayBlockingQueue<>(100000);
         insertedTuples.addAll(tuples);
         assertEquals(31000, insertedTuples.size());
         int size = insertedTuples.size();
 
+        TransactionId repTId = new TransactionId();
         // now insert some random tuples
         System.out.println("Inserting tuples...");
         List<BTreeInserter> insertThreads = new ArrayList<>();
@@ -141,6 +152,17 @@ public class BTreeTest extends SimpleDbTestBase {
 
         // wait for all threads to finish
         waitForInserterThreads(insertThreads);
+
+        System.out.println("check [0]");
+        try {
+            BTreeChecker.checkRep(bf, repTId, new HashMap<>(), true);
+        } catch (Throwable e) {
+            e.printStackTrace();
+            printAllPages(bf, repTId);
+            throw new RuntimeException(e);
+        }
+        Database.getBufferPool().transactionComplete(repTId, false);
+
         assertTrue(insertedTuples.size() > size);
 
         // now insert and delete tuples at the same time
@@ -155,6 +177,17 @@ public class BTreeTest extends SimpleDbTestBase {
         // wait for all threads to finish
         waitForInserterThreads(insertThreads);
         waitForDeleterThreads(deleteThreads);
+
+        System.out.println("check [1]");
+        try {
+            BTreeChecker.checkRep(bf, repTId, new HashMap<>(), true);
+        } catch (Throwable e) {
+            e.printStackTrace();
+            printAllPages(bf, repTId);
+            throw new RuntimeException(e);
+        }
+        Database.getBufferPool().transactionComplete(repTId, false);
+
         int numPages = bf.numPages();
         size = insertedTuples.size();
 
@@ -167,6 +200,16 @@ public class BTreeTest extends SimpleDbTestBase {
 
             // wait for all threads to finish
             waitForDeleterThreads(deleteThreads);
+            System.out.println("check [2]");
+            try {
+                BTreeChecker.checkRep(bf, repTId, new HashMap<>(), true);
+            } catch (Throwable e) {
+                e.printStackTrace();
+                printAllPages(bf, repTId);
+                throw new RuntimeException(e);
+            }
+            Database.getBufferPool().transactionComplete(repTId, false);
+
         }
         assertTrue(insertedTuples.size() < size);
         size = insertedTuples.size();
@@ -180,6 +223,9 @@ public class BTreeTest extends SimpleDbTestBase {
 
             // wait for all threads to finish
             waitForInserterThreads(insertThreads);
+            System.out.println("check [3]");
+            BTreeChecker.checkRep(bf, repTId, new HashMap<>(), true);
+            Database.getBufferPool().transactionComplete(repTId, false);
         }
         assertTrue(insertedTuples.size() > size);
         size = insertedTuples.size();
@@ -191,6 +237,16 @@ public class BTreeTest extends SimpleDbTestBase {
         deleteThreads = null;
 
         List<List<Integer>> tuplesList = new ArrayList<>(insertedTuples);
+        DbFileIterator myIt = bf.iterator(new TransactionId());
+        myIt.open();
+        int myCnt = 0;
+        while (myIt.hasNext()) {
+            myIt.next();
+            myCnt++;
+        }
+        myIt.close();
+        System.out.println("expected num: " + tuplesList.size() + ", actual num: " + myCnt);
+
         TransactionId tid = new TransactionId();
 
         // First look for random tuples and make sure we can find them
@@ -236,6 +292,7 @@ public class BTreeTest extends SimpleDbTestBase {
         BufferPool.resetPageSize();
 
     }
+    // 猜测还是有脏数据
 
     /**
      * Make test compatible with older version of ant.
