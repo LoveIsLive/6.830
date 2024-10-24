@@ -5,15 +5,13 @@ import simpledb.common.Permissions;
 import simpledb.common.DbException;
 import simpledb.index.BTreeLeafPage;
 import simpledb.index.BTreeUtility;
-import simpledb.transaction.PageRWLockManage;
-import simpledb.transaction.TransactionAbortedException;
-import simpledb.transaction.TransactionId;
-import simpledb.transaction.TransactionPageLockManage;
+import simpledb.transaction.*;
 
 import java.io.*;
 
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.*;
 
@@ -48,8 +46,8 @@ public class BufferPool {
     private final Map<PageId, LRUDNode> map;
     private final ReentrantLock mapMonitor = new ReentrantLock();
     // 对map操作加锁，也就意味着对LRU队列操作加锁。BufferPool类每个方法不要sync，会死锁。并发操作均使用mapMonitor!!!
-    private final TransactionPageLockManage tpLockManage;
-    private final PageRWLockManage pageRWLockManage;
+    private final PageLockManage pageManage;
+
     private static final int TIMEOUT_MILLISECONDS = 1500; // 认为死锁超时的时间
     private final Random randomTimeout = new Random();
     private final Map<Long, Integer> tRandomTimeout = new ConcurrentHashMap<>(); // 并发
@@ -77,16 +75,7 @@ public class BufferPool {
         tail = new LRUDNode();
         head.next = tail;
         tail.prev = head;
-        this.pageRWLockManage = new PageRWLockManage();
-        this.tpLockManage = new TransactionPageLockManage(this.pageRWLockManage);
-    }
-
-    public TransactionPageLockManage getTpLockManage() {
-        return tpLockManage;
-    }
-
-    public PageRWLockManage getPageRWLockManage() {
-        return pageRWLockManage;
+        this.pageManage = new PageLockManage();
     }
 
     public static int getPageSize() {
@@ -122,85 +111,38 @@ public class BufferPool {
         throws TransactionAbortedException, DbException {
         // completed!
         long startTime = System.currentTimeMillis();
-        boolean success = true;
         while (true) {
-            success = true;
-            mapMonitor.lock(); // map lock!
-            LRUDNode node = map.get(pid);
-            if(node == null) { // insert
+            if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))
+                throw new TransactionAbortedException(); // 认为死锁
+            boolean success = pageManage.accessPage(tid, pid, perm);
+            if(success) {
+                mapMonitor.lock();
                 try {
-                    node = lruInsertHead(new LRUDNode(pid,
-                            Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid)));
-                } catch (Throwable e) {
-                    mapMonitor.unlock(); // 任何可能出现错误的地方都要, try保证mapMonitor被正确释放
-                    throw e;
-                }
-            } else {
-                node.prev.next = node.next;
-                node.next.prev = node.prev;
-                node.next = head.next;
-                head.next.prev = node;
-                head.next = node;
-                node.prev = head;
-            }
-            TransactionPageLockManage.LockInfo curLock = tpLockManage.holdTPLock(tid, pid); // 确切持有锁。（事务在新插入的页面也可能持有锁）
-            // curLock仍旧不能保证在一个事务多个线程处理时保持正确。因为curLock返回时，其他线程可能获得或释放它，这可能导致数据不一致。
-            // 对BTreeTest不影响（它一个事务只在一个线程执行）。
-            StampedLock curStampLock = pageRWLockManage.getRWLock(pid); // sync保证每个pid只会有一个stampedLock
-            if(curLock != null) {
-                // 如果所需写锁且当前不是，若只有当前事务拥有锁（且是读锁）则升级为写锁
-                if(perm == Permissions.READ_WRITE && curLock.getPerm() == Permissions.READ_ONLY) {
-                    long stamp = curStampLock.tryConvertToWriteLock(curLock.getStamp());
-                    if(stamp != 0) { // 升级成功
-                        curLock.setStamp(stamp);
-                        curLock.setPerm(perm);
-                        mapMonitor.unlock();
-//                        System.out.println("事务" + tid.getId()  + ": 升级页面 " + pid.getPageNumber() + " 的锁");
+                    LRUDNode node = map.get(pid);
+                    if(node == null) {
+                        node = lruInsertHead(new LRUDNode(pid,
+                                Database.getCatalog().getDatabaseFile(pid.getTableId()).readPage(pid)));
                     } else {
-                        mapMonitor.unlock();
-                        // 重试（等待至可以升级锁），超过一定时间认为发生了死锁
-                        success = false;
-                        if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))
-                            throw new TransactionAbortedException(); // 认为死锁
-                        try {
-                            Thread.sleep(100); // sleep a few
-                        } catch (InterruptedException e) {
-                            System.out.println("getPage, sleep exception: " + e.getMessage());
-                        }
+                        node.prev.next = node.next;
+                        node.next.prev = node.prev;
+                        node.next = head.next;
+                        head.next.prev = node;
+                        head.next = node;
+                        node.prev = head;
                     }
-                } else {
-                    // 不需要做什么
+                    if(perm == Permissions.READ_WRITE) {
+                        node.val.markDirty(true, tid);
+                    }
+                    return node.val;
+                } finally {
                     mapMonitor.unlock();
                 }
             } else {
-                mapMonitor.unlock();
-                long stamp = 0;
-                if((stamp = accessLock(curStampLock, perm,200 + new Random().nextInt(50), TimeUnit.MILLISECONDS)) != 0) {
-                    tpLockManage.addTPLock(tid, pid, stamp, perm); // 保证可重入，新的stamp替代老的，并释放老的
-//                    System.out.println("事务" + tid.getId() + ": 获得页面 " + pid.getPageNumber() + " 的" + perm + "锁");
-                } else {
-                    success = false;
-                    if(System.currentTimeMillis() - startTime > getTransactionTimeout(tid.getId()))
-                        throw new TransactionAbortedException(); // 认为死锁
+                try {
+                    Thread.sleep(20 + ThreadLocalRandom.current().nextInt(60)); // 随机化减少竞争
+                } catch (InterruptedException e) {
+                    System.out.println("getPage: sleep exception: " + e.getMessage());
                 }
-            }
-            if(success) {
-                // 将所有写权限的页面全部标记为脏，以保证数据的一致性
-                if(perm == Permissions.READ_WRITE) {
-                    mapMonitor.lock();
-                    try {
-                        node.val.markDirty(true, tid);
-                        // 保证插入
-                        if(map.get(pid) != node) { // != node才能说明不在bp中了，而不是==null(会出现数据丢失) !!!!!!
-                            discardPage(pid); // 需先删除之前可能存在的（否则可能会死循环）
-                            lruInsertHead(node);
-                        }
-                        assert map.get(pid) == node;
-                    } finally {
-                        mapMonitor.unlock();
-                    }
-                }
-                return node.val;
             }
         }
     }
@@ -223,17 +165,6 @@ public class BufferPool {
         return node;
     }
 
-    // 尝试以指定时间访问锁
-    private long accessLock(StampedLock stampedLock, Permissions perm, long time, TimeUnit timeUnit) {
-        try {
-            return perm == Permissions.READ_ONLY ? stampedLock.tryReadLock(time, timeUnit) :
-                    stampedLock.tryWriteLock(time, timeUnit);
-        } catch (InterruptedException e) {
-            System.out.println("accessLock fail: " + e.getMessage());
-        }
-        return 0; // 表示失败
-    }
-
     // 随机化超时时间
     private int getTransactionTimeout(long tid) {
         tRandomTimeout.putIfAbsent(tid, randomTimeout.nextInt(1000) + TIMEOUT_MILLISECONDS);
@@ -253,7 +184,7 @@ public class BufferPool {
     public void unsafeReleasePage(TransactionId tid, PageId pid) {
         // completed!
         // not necessary for lab1|lab2
-        tpLockManage.removeTPLock(tid, pid);
+        pageManage.releasePage(tid, pid);
     }
 
 
@@ -272,7 +203,7 @@ public class BufferPool {
     public boolean holdsLock(TransactionId tid, PageId p) {
         // completed!
         // not necessary for lab1|lab2
-        return tpLockManage.holdTPLock(tid, p) != null;
+        return pageManage.holdsPage(tid, p);
     }
 
     /**
@@ -291,13 +222,13 @@ public class BufferPool {
                 // 刷新脏页
                 flushPages(tid);
                 // 释放事务的锁
-                tpLockManage.removeAllTPLock(tid);
+                pageManage.releaseTransactionAllPages(tid);
             } catch (IOException e) {
                 throw new RuntimeException("unknown error: " + e.getMessage());
             }
         } else {
             discardPages(tid);
-            tpLockManage.removeAllTPLock(tid);
+            pageManage.releaseTransactionAllPages(tid);
         }
         tRandomTimeout.remove(tid.getId());
     }
