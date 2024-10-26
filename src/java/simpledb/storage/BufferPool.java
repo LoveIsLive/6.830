@@ -92,6 +92,15 @@ public class BufferPool {
     	BufferPool.pageSize = DEFAULT_PAGE_SIZE;
     }
 
+    // 锁住整个BP操作，注意，一定要调用unlockBP方法
+    public void lockBP() {
+        mapMonitor.lock();
+    }
+
+    public void unlockBP() {
+        mapMonitor.unlock();
+    }
+
     /**
      * Retrieve the specified page with the associated permissions.
      * Will acquire a lock and may block if that lock is held by another
@@ -220,7 +229,26 @@ public class BufferPool {
         if(commit) {
             try {
                 // 刷新脏页
-                flushPages(tid);
+//                flushPages(tid);
+                mapMonitor.lock();
+                try {
+                    LRUDNode p = head.next;
+                    while (p != tail) {
+                        PageId pageId = p.key;
+                        Page page = p.val;
+                        if(tid.equals(page.isDirty())) {
+                            DbFile dbFile = Database.getCatalog().getDatabaseFile(pageId.getTableId());
+                            Database.getLogFile().logWrite(tid, page.getBeforeImage(), page);
+                            Database.getLogFile().force();
+                            dbFile.writePage(page);
+                            page.setBeforeImage(); // 事务提交时设置
+                            page.markDirty(false, tid); // 事务提交后才能标记为clean
+                        }
+                        p = p.next;
+                    }
+                } finally {
+                    mapMonitor.unlock();
+                }
                 // 释放事务的锁
                 pageManage.releaseTransactionAllPages(tid);
             } catch (IOException e) {
@@ -228,6 +256,12 @@ public class BufferPool {
             }
         } else {
             discardPages(tid);
+//            try {
+//                Database.getLogFile().rollback(tid);
+//            } catch (IOException e) {
+//                System.err.println("rollback error: " + tid);
+//                throw new RuntimeException(e);
+//            }
             pageManage.releaseTransactionAllPages(tid);
         }
         tRandomTimeout.remove(tid.getId());
@@ -350,8 +384,9 @@ public class BufferPool {
             TransactionId dirtyTId = lrudNode.val.isDirty();
             if(dirtyTId != null) {
                 DbFile dbFile = Database.getCatalog().getDatabaseFile(pid.getTableId());
+                Database.getLogFile().logWrite(dirtyTId, lrudNode.val.getBeforeImage(), lrudNode.val);
+                Database.getLogFile().force();
                 dbFile.writePage(lrudNode.val);
-                lrudNode.val.markDirty(false, dirtyTId);
             }
         } finally {
             mapMonitor.unlock();
@@ -366,18 +401,12 @@ public class BufferPool {
         mapMonitor.lock();
         try {
             LRUDNode p = head.next;
-            int cnt = 0;
             while (p != tail) {
                 Page page = p.val;
                 if(tid.equals(page.isDirty())) {
                     flushPage(page.getId());
                 }
                 p = p.next;
-                cnt++;
-                if(cnt > map.size() + 10) {
-                    System.out.println("LRU结构指针错误");
-                    assert false;
-                }
             }
         } finally {
             mapMonitor.unlock();
