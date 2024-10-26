@@ -144,12 +144,12 @@ public class BTreeFile implements DbFile {
         RandomAccessFile rf = new RandomAccessFile(f, "rw");
         if (id.pgcateg() == BTreePageId.ROOT_PTR) {
             rf.write(data);
-            rf.getFD().sync();
+//            rf.getFD().sync(); // 由日志系统保证写入
             rf.close();
         } else {
             rf.seek(BTreeRootPtrPage.getPageSize() + (long) (page.getId().getPageNumber() - 1) * BufferPool.getPageSize());
             rf.write(data);
-            rf.getFD().sync();
+//            rf.getFD().sync();
             rf.close();
         }
     }

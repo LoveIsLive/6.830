@@ -116,8 +116,8 @@ public class HeapFile implements DbFile {
         // completed!
         SeekableByteChannel channel = openFileAndPosition(page.getId(), StandardOpenOption.WRITE);
         channel.write(ByteBuffer.wrap(page.getPageData()));
-        if(channel instanceof FileChannel)
-            ((FileChannel) channel).force(true); // flush
+//        if(channel instanceof FileChannel)
+//            ((FileChannel) channel).force(true); // flush 由日志系统保证写入
 
         channel.close();
     }
