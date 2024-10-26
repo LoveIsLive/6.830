@@ -523,6 +523,7 @@ public class LogFile {
                     break;
                 }
             }
+            // 可以统一在后面 raf.skipBytes(LONG_SIZE);
 
             raf.seek(curOffset);
         }

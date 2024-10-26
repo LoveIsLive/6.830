@@ -686,29 +686,7 @@ public class BTreeUtility {
         public void run() {
             try {
                 Tuple t = BTreeUtility.getBTreeTuple(tupdata);
-                List<Page> pages = Database.getBufferPool().insertTuple(tid, bf.getId(), t);
-
-                DbFileIterator iterator = bf.iterator(tid);
-                boolean found = false;
-                iterator.open();
-                while (iterator.hasNext()) {
-                    Tuple next = iterator.next();
-                    if(tupleToList(next).equals(tupleToList(t))) {
-                        found = true;
-                        break;
-                    }
-                }
-                iterator.close();
-                if(!found) {
-                    System.out.println("expected tuple: " + tupleToList(t));
-                    Page leafPage = pages.get(0);
-                    System.out.println("----------------------leafPage--------------------------------");
-                    System.out.println(leafPage);
-                    System.out.println("----------------------leafPage--------------------------------");
-                    printAllPages(bf, tid);
-                    assert false;
-                }
-
+                Database.getBufferPool().insertTuple(tid, bf.getId(), t);
                 Database.getBufferPool().transactionComplete(tid);
                 List<Integer> tuple = tupleToList(t);
                 insertedTuples.put(tuple);

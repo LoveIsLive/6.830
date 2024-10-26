@@ -19,7 +19,9 @@ public class IntegerAggregator implements Aggregator {
     private final Type gbfieldType;
     private final int aggfieldIdx;
     private final Op what;
-    private final Map<Field, double[]> map; // gbfieldVal -> [curAggVal, curCount]
+    private final Map<Field, int[]> map; // gbfieldVal -> [curAggVal, curCount]
+    // curCount也只对avg有用，且avg op时，是gbfieldVal -> [curSum, curCount]
+    // 使用(curAggVal * curCount + newVal) / (curCount + 1)计算会出现误差(double也是)
     /**
      * Aggregate constructor
      * 
@@ -64,24 +66,24 @@ public class IntegerAggregator implements Aggregator {
         map.compute(gbField, (k, v) -> {
             switch (what) {
                 case MIN: {
-                    if(v == null) return new double[]{ aggField.getValue(), 1};
-                    return new double[]{ Math.min(aggField.getValue(), v[0]), v[1] + 1};
+                    if(v == null) return new int[]{ aggField.getValue(), 1};
+                    return new int[]{ Math.min(aggField.getValue(), v[0]), v[1] + 1};
                 }
                 case MAX: {
-                    if(v == null) return new double[]{ aggField.getValue(), 1};
-                    return new double[]{ Math.max(aggField.getValue(), v[0]), v[1] + 1};
+                    if(v == null) return new int[]{ aggField.getValue(), 1};
+                    return new int[]{ Math.max(aggField.getValue(), v[0]), v[1] + 1};
                 }
                 case SUM: {
-                    if(v == null) return new double[]{ aggField.getValue(), 1};
-                    return new double[]{ aggField.getValue() + v[0], v[1] + 1};
+                    if(v == null) return new int[]{ aggField.getValue(), 1};
+                    return new int[]{ aggField.getValue() + v[0], v[1] + 1};
                 }
                 case COUNT: {
-                    if(v == null) return new double[]{ 1, 1};
-                    return new double[]{ v[0] + 1, v[1] + 1};
+                    if(v == null) return new int[]{ 1, 1};
+                    return new int[]{ v[0] + 1, v[1] + 1};
                 }
                 case AVG: {
-                    if(v == null) return new double[]{ aggField.getValue(), 1};
-                    return new double[]{ (v[0] * v[1] + aggField.getValue()) / (v[1] + 1), v[1] + 1};
+                    if(v == null) return new int[]{ aggField.getValue(), 1};
+                    return new int[]{ v[0] + aggField.getValue(), v[1] + 1};
                 }
                 default: {
                     throw new IllegalArgumentException("operator illegal");
@@ -109,7 +111,9 @@ public class IntegerAggregator implements Aggregator {
         TupleDesc tupleDesc = new TupleDesc(types);
         List<Tuple> tupleList = map.entrySet().stream().map(entry -> {
             Field gbField = entry.getKey();
-            int aggV = (int) entry.getValue()[0];
+            int aggV = entry.getValue()[0];
+            int cnt = entry.getValue()[1];
+            if(what == Op.AVG) aggV /= cnt;
             Tuple tuple = new Tuple(tupleDesc);
             if (gbfieldIdx == Aggregator.NO_GROUPING) {
                 tuple.setField(0, new IntField(aggV));

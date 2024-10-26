@@ -126,7 +126,7 @@ public class BTreeTest extends SimpleDbTestBase {
                 null, tuples, 0);
 
         // we will need more room in the buffer pool for this test
-//        Database.resetBufferPool(500);
+        Database.resetBufferPool(500);
 
         BlockingQueue<List<Integer>> insertedTuples = new ArrayBlockingQueue<>(100000);
         insertedTuples.addAll(tuples);
@@ -292,7 +292,6 @@ public class BTreeTest extends SimpleDbTestBase {
         BufferPool.resetPageSize();
 
     }
-    // 猜测还是有脏数据
 
     /**
      * Make test compatible with older version of ant.

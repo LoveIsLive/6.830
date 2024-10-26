@@ -60,7 +60,7 @@ public class BufferPool {
     /** Default number of pages passed to the constructor. This is used by
     other classes. BufferPool should use the numPages argument to the
     constructor instead. */
-    public static final int DEFAULT_PAGES = 500;
+    public static final int DEFAULT_PAGES = 50;
 
     /**
      * Creates a BufferPool that caches up to numPages pages.
@@ -283,11 +283,11 @@ public class BufferPool {
      * @param t       the tuple to add
      * @return
      */
-    public List<Page> insertTuple(TransactionId tid, int tableId, Tuple t)
+    public void insertTuple(TransactionId tid, int tableId, Tuple t)
         throws DbException, IOException, TransactionAbortedException {
         // completed!
         DbFile dbFile = Database.getCatalog().getDatabaseFile(tableId);
-        return dbFile.insertTuple(tid, t);
+        dbFile.insertTuple(tid, t);
     }
 
     /**

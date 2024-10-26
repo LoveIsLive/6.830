@@ -566,8 +566,7 @@ public class BTreeFile implements DbFile {
         // insert the tuple into the leaf page
         leafPage.insertTuple(t);
 
-//        return new ArrayList<>(dirtypages.values());
-        return Collections.singletonList(leafPage);
+        return new ArrayList<>(dirtypages.values());
     }
 
     /**
